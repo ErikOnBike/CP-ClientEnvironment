@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <script type="module" src="/static/squeak_headless_bundle.js"></script>
+  <script>
+    let appNameFromUrl = document.location.search.slice(1);
+    let appNameFromSession = window.sessionStorage.getItem("APP");
+    if(appNameFromUrl !== appNameFromSession) {
+      if(appNameFromSession) {
+        // End previous session by removing the session id
+        window.sessionStorage.removeItem("CLIENT_ID");
+      }
+      window.sessionStorage.setItem("APP", appNameFromUrl);
+    }
+    window.sessionStorage.setItem("SERVER_URL", "ws://localhost:8080/io");
+    window.addEventListener("load", function() {
+      self.SqueakJS.fetchImageAndRun("/static/client-environment.image", { ignoreQuit: false });
+    });
+  </script>
+</head>
+<body></body>
+</html>
