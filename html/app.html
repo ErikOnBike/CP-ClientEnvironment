@@ -13,7 +13,7 @@
       }
       window.sessionStorage.setItem("APP", appNameFromUrl);
     }
-    window.sessionStorage.setItem("SERVER_URL", "ws://localhost:8080/io");
+    window.sessionStorage.setItem("SERVER_URL", "ws://" + document.location.host + "/io");
     window.addEventListener("load", function() {
       self.SqueakJS.fetchImageAndRun("/static/client-environment.image", { ignoreQuit: false });
     });
