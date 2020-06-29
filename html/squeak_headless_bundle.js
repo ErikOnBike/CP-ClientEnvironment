@@ -10898,7 +10898,7 @@
           if(namespaceURI) {
             attributeValue = domElement.getAttributeNS(namespaceURI, attributeName);
           } else {
-            attributeName = domElement.getAttribute(attributeName);
+            attributeValue = domElement.getAttribute(attributeName);
           }
           return this.answer(argCount, attributeValue);
         },
