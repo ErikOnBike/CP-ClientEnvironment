@@ -11207,19 +11207,6 @@
             shadowRoot.appendChild(templateElement.cloneNode(true));
         },
 
-        // TemplateComponent instance methods
-        "primitiveRender": function(argCount) {
-          if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          if(!receiver.sqClass.templateElement) return false;
-          this.render(receiver);
-          return this.answerSelf(argCount);
-        },
-        render: function(webComponent) {
-          var templateElement = webComponent.sqClass.templateElement;
-          this.renderTemplateOnElement(templateElement, webComponent.domElement);
-        },
-
         // Update process
         runUpdateProcess: function() {
           let thisHandle = this;
