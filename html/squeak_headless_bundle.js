@@ -4719,7 +4719,7 @@
                 case 232: this.vm.warnOnce("missing primitive: 232 (primitiveFormPrint)"); return false;
                 case 233: return this.primitiveSetFullScreen(argCount);
                 case 234: if (this.oldPrims) return this.namedPrimitive('MiscPrimitivePlugin', 'primitiveDecompressFromByteArray', argCount);
-                case 235: /*(if (this.oldPrims)*/ return this.namedPrimitive('MiscPrimitivePlugin', 'primitiveCompareString', argCount);
+                case 235: if (this.oldPrims) return this.namedPrimitive('MiscPrimitivePlugin', 'primitiveCompareString', argCount);
                 case 236: if (this.oldPrims) return this.namedPrimitive('MiscPrimitivePlugin', 'primitiveConvert8BitSigned', argCount);
                 case 237: if (this.oldPrims) return this.namedPrimitive('MiscPrimitivePlugin', 'primitiveCompressToByteArray', argCount);
                 case 238: if (this.oldPrims) return this.namedPrimitive('SerialPlugin', 'primitiveSerialPortOpen', argCount);
@@ -10615,7 +10615,7 @@
         associationClass: null,
         eventsReceived: [],
         eventKeys: [ "x", "y", "pageX", "pageY" ],
-        debounceEventTypes: [ "mousemove", "pointermove", "dragover", "resize", "scroll", "wheel" ],
+        debounceEventTypes: [ "pointermove", "dragover", "resize", "scroll", "wheel" ],
         namespaces: {
           // Default namespaces (for attributes, therefore without elementClass)
           xlink: { uri: "http://www.w3.org/1999/xlink", elementClass: null },
@@ -10627,6 +10627,7 @@
           this.interpreterProxy = anInterpreter;
           this.primHandler = this.interpreterProxy.vm.primHandler;
           this.associationClass = this.interpreterProxy.vm.globalNamed("Association");
+          this.stringClass = this.interpreterProxy.vm.globalNamed("String");
           this.symbolClass = this.interpreterProxy.vm.globalNamed("Symbol");
           this.addEventHandlers();
           this.runUpdateProcess();
@@ -10907,7 +10908,7 @@
           var attributeName = this.interpreterProxy.stackValue(1).bytesAsString();
           if(!attributeName) return false;
           var value = this.interpreterProxy.stackValue(0);
-          if(!value.isNil && !value.bytes) return false;
+          if(!value.isNil && !(value.sqClass === this.stringClass || value.sqClass === this.symbolClass)) return false;
           var attributeValue = value.isNil ? null: value.bytesAsString();
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -11049,6 +11050,19 @@
           if(childElement.parentElement !== domElement) return false;
           domElement.removeChild(childElement);
           return this.answer(argCount, childInstance);
+        },
+        "primitiveDOMElementFocus": function(argCount) {
+          if(argCount !== 0) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+          // @@ToDo: Hack for the moment to give input field of CpCursor focus
+          var cursor;
+          if(domElement.localName === "cp-cursor" && domElement.shadowRoot && (cursor = domElement.shadowRoot.querySelector("input"))) {
+            cursor.focus();
+          } else {
+            domElement.focus();
+          }
+          return this.answerSelf(argCount);
         },
 
         // HTMLElement class methods
@@ -11241,39 +11255,90 @@
         // Event handling
         addEventHandlers: function() {
           let body = window.document.body;
-          let eventListenerTypes = [
-    //        "mousedown",
-    //        "mouseup",
-    //        "mousemove",
+          let thisHandle = this;
+          [
             "pointerdown",
             "pointerup",
-            "pointermove",
-    //        "pointercancel"
-          ];
-          let thisHandle = this;
-          eventListenerTypes.forEach(function(type) {
+            "pointermove"
+    //        "pointercancel" // Is this needed?
+          ].forEach(function(pointerType) {
             body.addEventListener(
-              type,
+              pointerType,
               function(event) {
-                thisHandle.handleEvent.call(thisHandle, event);
-              },
-              { capture: false, passive: true }
+                event.preventDefault();
+                thisHandle.handlePointerEvent.call(thisHandle, event);
+
+                // Handle events directly, except for move events (for smooth behavior)
+                if(pointerType !== "pointermove") {
+                  thisHandle.handleEvents();
+                }
+              }
+            );
+          });
+          [
+            "keydown",
+            "keyup"
+          ].forEach(function(inputType) {
+            body.addEventListener(
+              inputType,
+              function(event) {
+                event.preventDefault();
+                thisHandle.handleKeyEvent.call(thisHandle, event);
+                thisHandle.handleEvents();
+              }
+            );
+          });
+          [
+            "compositionstart",
+            "compositionupdate",
+            "compositionend"
+          ].forEach(function(inputType) {
+            body.addEventListener(
+              inputType,
+              function(event) {
+                event.preventDefault();
+                thisHandle.handleCompositionEvent.call(thisHandle, event);
+                thisHandle.handleEvents();
+              }
+            );
+          });
+    /*
+          // Do not prevent key events (above) when using input events, otherwise input events won't be triggered
+          [
+            "beforeinput",
+            "input"
+          ].forEach(function(inputType) {
+            body.addEventListener(
+              inputType,
+              function(event) {
+                event.preventDefault();
+                thisHandle.handleInputEvent.call(thisHandle, event);
+              }
+            );
+          });
+    */
+
+          // Prevent default behavior for number of events
+          [
+            "touchstart",   // @@ToDo: add these back later
+            "touchmove",    // @@ToDo: add these back later
+            "touchend",     // @@ToDo: add these back later
+            "mousedown",
+            "mousemove",
+            "mouseup",
+            "click",        // Explicitly, it is deduced in the Smalltalk code based on other events
+            "keypress"      // Explicitly, it is deduced in the Smalltalk code based on other events
+          ].forEach(function(touchType) {
+            body.addEventListener(
+              touchType,
+              function(event) {
+                event.preventDefault();
+              }
             );
           });
         },
-        handleEvent: function(event) {
+        handlePointerEvent: function(event) {
           let type = event.type;
-
-          // @@ToDo: Hack for the moment in between moving to 'pointer' events
-          if(event.touches) {
-            if(event.touches.length !== 1) {
-              return;
-            }
-            event = event.touches[0];
-          }
-          if(type.startsWith("pointer")) {
-            type = type.replace(/pointer/, "mouse");
-          }
 
           // Find target and element which received the event.
           // The target should be a WebComponent.
@@ -11326,13 +11391,15 @@
 
           // Store event
           let receivedEvent = {
+            makeSt: this.makePointerEvent,
             type: type,
+            timeStamp: event.timeStamp,
+            target: target,
+            elementId: elementId,
             x: Math.floor(event.pageX),
             y: Math.floor(event.pageY),
             offsetX: event.offsetX === undefined ? null : Math.floor(event.offsetX),
-            offsetY: event.offsetY === undefined ? null : Math.floor(event.offsetY),
-            target: target,
-            elementId: elementId
+            offsetY: event.offsetY === undefined ? null : Math.floor(event.offsetY)
           };
 
           // Add or replace last event if same type (replace events as debouncing mechanism)
@@ -11342,6 +11409,101 @@
             this.eventsReceived.push(receivedEvent);
           }
         },
+        makePointerEvent: function(event) {
+          var symbolTable = this.symbolClass.symbolTable;
+          return [
+            this.makeStAssociation(symbolTable["type"], symbolTable[event.type]),
+            this.makeStAssociation(symbolTable["timeStamp"], event.timeStamp),
+            this.makeStAssociation(symbolTable["target"], event.target),
+            this.makeStAssociation(symbolTable["elementId"], event.elementId),
+            this.makeStAssociation(symbolTable["x"], event.x),
+            this.makeStAssociation(symbolTable["y"], event.y),
+            this.makeStAssociation(symbolTable["offsetX"], event.offsetX),
+            this.makeStAssociation(symbolTable["offsetY"], event.offsetY)
+          ];
+        },
+        handleKeyEvent: function(event) {
+          let type = event.type;
+          let modifiers =
+            (event.altKey ? 1 : 0) +
+            (event.ctrlKey ? 2 : 0) +
+            (event.metaKey ? 4 : 0) +
+            (event.shiftKey ? 8 : 0)
+          ;
+
+          // Store event
+          let receivedEvent = {
+            makeSt: this.makeKeyEvent,
+            type: type,
+            timeStamp: event.timeStamp,
+            modifiers: modifiers,
+            key: event.key,
+            isComposing: event.isComposing
+          };
+
+          // Add event
+          this.eventsReceived.push(receivedEvent);
+        },
+        makeKeyEvent: function(event) {
+          var symbolTable = this.symbolClass.symbolTable;
+          return [
+            this.makeStAssociation(symbolTable["type"], symbolTable[event.type]),
+            this.makeStAssociation(symbolTable["timeStamp"], event.timeStamp),
+            this.makeStAssociation(symbolTable["modifiers"], event.modifiers),
+            this.makeStAssociation(symbolTable["key"], "" + event.key),
+            this.makeStAssociation(symbolTable["isComposing"], !!event.isComposing)
+          ];
+        },
+        handleCompositionEvent: function(event) {
+          let type = event.type;
+
+          // Store event
+          let receivedEvent = {
+            makeSt: this.makeCompositionEvent,
+            type: type,
+            timeStamp: event.timeStamp,
+            data: event.data
+          };
+
+          // Add event
+          this.eventsReceived.push(receivedEvent);
+        },
+        makeCompositionEvent: function(event) {
+          var symbolTable = this.symbolClass.symbolTable;
+          return [
+            this.makeStAssociation(symbolTable["type"], symbolTable[event.type]),
+            this.makeStAssociation(symbolTable["timeStamp"], event.timeStamp),
+            this.makeStAssociation(symbolTable["data"], event.data),
+          ];
+        },
+    /*
+        handleInputEvent: function(event) {
+          let type = event.type;
+
+          // Store event
+          let receivedEvent = {
+            makeSt: this.makeInputEvent,
+            type: type,
+            timeStamp: event.timeStamp,
+            data: event.data,
+            inputType: event.inputType,
+            isComposing: event.isComposing
+          };
+
+          // Add event
+          this.eventsReceived.push(receivedEvent);
+        },
+        makeInputEvent: function(event) {
+          var symbolTable = this.symbolClass.symbolTable
+          return [
+            this.makeStAssociation(symbolTable["type"], symbolTable[event.type]),
+            this.makeStAssociation(symbolTable["timeStamp"], event.timeStamp),
+            this.makeStAssociation(symbolTable["data"], event.data),
+            this.makeStAssociation(symbolTable["inputType"], "" + event.inputType),
+            this.makeStAssociation(symbolTable["isComposing"], !!event.isComposing)
+          ];
+        },
+    */
 
         // Browser Event Handler instance methods
         "primitiveEventHandlerRegisterProcess:": function(argCount) {
@@ -11360,19 +11522,10 @@
           if(argCount !== 0) return false;
 
           // Answer event list and create empty list for future events
-          var symbolTable = this.symbolClass.symbolTable;
           var thisHandle = this;
           var eventsReceived = this.eventsReceived
             .map(function(event) {
-              return [
-                thisHandle.makeStAssociation(symbolTable["type"], symbolTable[event.type]),
-                thisHandle.makeStAssociation(symbolTable["x"], event.x),
-                thisHandle.makeStAssociation(symbolTable["y"], event.y),
-                thisHandle.makeStAssociation(symbolTable["offsetX"], event.offsetX),
-                thisHandle.makeStAssociation(symbolTable["offsetY"], event.offsetY),
-                thisHandle.makeStAssociation(symbolTable["target"], event.target),
-                thisHandle.makeStAssociation(symbolTable["elementId"], event.elementId)
-              ];
+              return event.makeSt.call(thisHandle, event);
             })
           ;
           var result = this.primHandler.makeStArray(eventsReceived);
