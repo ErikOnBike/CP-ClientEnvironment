@@ -4,6 +4,7 @@
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
   <script type="module" src="/static/squeak_headless_bundle.js"></script>
   <script>
+    // Set application identifier
     let appNameFromUrl = document.location.search.slice(1);
     let appNameFromSession = window.sessionStorage.getItem("APP");
     if(appNameFromUrl !== appNameFromSession) {
@@ -13,7 +14,19 @@
       }
       window.sessionStorage.setItem("APP", appNameFromUrl);
     }
+
+    // Set server location
     window.sessionStorage.setItem("SERVER_URL", "ws://" + document.location.host + "/io");
+
+    // Set OS/platform identifier
+    let platform = navigator.platform;
+    window.sessionStorage.setItem("OS",
+      platform.indexOf("Mac") >= 0 ? "macos" :
+      platform.indexOf("Win") >= 0 ? "windows" :
+      platform.indexOf("Linux") >= 0 ? "linux" :
+      "unknown");
+
+    // Load and start image if this page and its scripts are loaded
     window.addEventListener("load", function() {
       self.SqueakJS.fetchImageAndRun("/static/client-environment.image", { ignoreQuit: false });
     });
