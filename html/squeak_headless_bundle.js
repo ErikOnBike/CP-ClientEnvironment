@@ -11480,8 +11480,7 @@
             type: event.type,
             timeStamp: event.timeStamp,
             data: event.data,
-            inputType: "" + event.inputType,
-            isComposing: !!event.isComposing
+            inputType: "" + event.inputType
           };
 
           // Add event
