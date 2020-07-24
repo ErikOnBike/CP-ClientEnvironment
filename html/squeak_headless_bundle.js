@@ -368,10 +368,6 @@
         },
         classNameFromImage: function(oopMap, rawBits) {
             var name = oopMap[rawBits[this.oop][Squeak.Class_name]];
-    // @@ToDo: Fix for tiny image, need to send PR
-    if(name === undefined) {
-    name = oopMap[rawBits[this.oop][3]];
-    }
             if (name && name._format >= 8 && name._format < 12) {
                 var bits = rawBits[name.oop],
                     bytes = name.decodeBytes(bits.length, bits, 0, name._format & 3);
@@ -775,9 +771,6 @@
                     }
                 }
             }
-    // @@ToDo: Fix for tiny image, need to send PR
-    var name = this.pointers[3];
-    if(name && name.bytes) return name.bytesAsString();
             return "_SOMECLASS_";
         },
         defaultInst: function() {
@@ -1019,10 +1012,6 @@
         },
         classNameFromImage: function(oopMap, rawBits) {
             var name = oopMap[rawBits[this.oop][Squeak.Class_name]];
-    // @@ToDo: Fix for tiny image, need to send PR
-    if(name === undefined) {
-    name = oopMap[rawBits[this.oop][3]];
-    }
             if (name && name._format >= 16 && name._format < 24) {
                 var bits = rawBits[name.oop],
                     bytes = name.decodeBytes(bits.length, bits, 0, name._format & 7);
@@ -10612,9 +10601,9 @@
         getModuleName: function() { return "CpDOMPlugin"; },
         interpreterProxy: null,
         primHandler: null,
-        associationClass: null,
+        eventClasses: [],
+        eventClassStructures: {},
         eventsReceived: [],
-        eventKeys: [ "x", "y", "pageX", "pageY" ],
         debounceEventTypes: [ "pointermove", "dragover", "resize", "scroll", "wheel" ],
         namespaces: {
           // Default namespaces (for attributes, therefore without elementClass)
@@ -10626,7 +10615,7 @@
         setInterpreter: function(anInterpreter) {
           this.interpreterProxy = anInterpreter;
           this.primHandler = this.interpreterProxy.vm.primHandler;
-          this.associationClass = this.interpreterProxy.vm.globalNamed("Association");
+          this.pointClass = this.interpreterProxy.vm.globalNamed("Point");
           this.stringClass = this.interpreterProxy.vm.globalNamed("String");
           this.symbolClass = this.interpreterProxy.vm.globalNamed("Symbol");
           this.addEventHandlers();
@@ -10670,7 +10659,7 @@
           ;
         },
 
-        // Helper method for converting from Smalltalk object to Javascript object
+        // Helper methods for converting from Smalltalk object to Javascript object and vice versa
         asJavascriptObject: function(obj) {
           if(obj.isNil) {
             return null;
@@ -10685,13 +10674,11 @@
           }
           throw Error("cannot convert to Javascript object");
         },
-
-        // Helper method for creating an Association (to allow creation of a Dictionary from array of Associations)
-        makeStAssociation: function(key, value) {
-          var newAssociation = this.interpreterProxy.vm.instantiateClass(this.associationClass, 0);
-          newAssociation.pointers[0] = key;
-          newAssociation.pointers[1] = this.primHandler.makeStObject(value);
-          return newAssociation;
+        makeStPoint: function(x, y) {
+          var newPoint = this.interpreterProxy.vm.instantiateClass(this.pointClass, 0);
+          newPoint.pointers[0] = this.primHandler.makeStObject(x);
+          newPoint.pointers[1] = this.primHandler.makeStObject(y);
+          return newPoint;
         },
 
         // DOM element helper methods
@@ -11253,6 +11240,56 @@
         },
 
         // Event handling
+        makeStEvent: function(event) {
+          let eventClassStructure = this.findEventClassStructure(event.type);
+          if(!eventClassStructure) {
+            return null;
+          }
+
+          // Create new instance and connect original event
+          let newEvent = this.interpreterProxy.vm.instantiateClass(eventClassStructure.eventClass, 0);
+          newEvent.event = event;
+
+          // Set event properties
+          let primHandler = this.primHandler;
+          eventClassStructure.instVarNames.forEach(function(instVarName, index) {
+            let value = event[instVarName];
+            if(value !== undefined && value !== null) {
+              newEvent.pointers[index] = primHandler.makeStObject(value);
+            }
+          });
+
+          return newEvent;
+        },
+        findEventClassStructure: function(eventType) {
+          return this.eventClassStructures[eventType] ||
+            (this.eventClassStructures[eventType] = this.buildEventClassStructure(eventType));
+        },
+        buildEventClassStructure: function(eventType) {
+          let eventClass = this.findEventClass(eventType);
+          if(!eventClass) {
+            return null;
+          }
+
+          // Create structure with class and all its instance variable names
+          return {
+            eventClass: eventClass,
+            instVarNames: eventClass.allInstVarNames()
+          };
+        },
+        findEventClass: function(eventType) {
+          let thisHandle = this;
+          return this.eventClasses.find(function(eventClass) {
+            return thisHandle.eventNameFromClass(eventClass) === eventType;
+          });
+        },
+        eventNameFromClass: function(eventClass) {
+          return eventClass.className()
+            .replace(/^Cp/, "")
+            .replace(/Event$/, "")
+            .toLowerCase()
+          ;
+        },
         addEventHandlers: function() {
           let body = window.document.body;
           let thisHandle = this;
@@ -11265,8 +11302,7 @@
             body.addEventListener(
               pointerType,
               function(event) {
-                event.preventDefault();
-                thisHandle.handlePointerEvent.call(thisHandle, event);
+                thisHandle.handlePointerEvent(event);
 
                 // Handle events directly, except for move events (for smooth behavior)
                 if(pointerType !== "pointermove") {
@@ -11282,8 +11318,7 @@
             body.addEventListener(
               inputType,
               function(event) {
-                event.preventDefault();
-                thisHandle.handleKeyEvent.call(thisHandle, event);
+                thisHandle.handleKeyEvent(event);
                 thisHandle.handleEvents();
               }
             );
@@ -11296,14 +11331,11 @@
             body.addEventListener(
               inputType,
               function(event) {
-                event.preventDefault();
-                thisHandle.handleCompositionEvent.call(thisHandle, event);
+                thisHandle.handleCompositionEvent(event);
                 thisHandle.handleEvents();
               }
             );
           });
-    /*
-          // Do not prevent key events (above) when using input events, otherwise input events won't be triggered
           [
             "beforeinput",
             "input"
@@ -11311,12 +11343,11 @@
             body.addEventListener(
               inputType,
               function(event) {
-                event.preventDefault();
-                thisHandle.handleInputEvent.call(thisHandle, event);
+                thisHandle.handleInputEvent(event);
+                thisHandle.handleEvents();
               }
             );
           });
-    */
 
           // Prevent default behavior for number of events
           [
@@ -11391,39 +11422,23 @@
 
           // Store event
           let receivedEvent = {
-            makeSt: this.makePointerEvent,
-            type: type,
+            event: event,
+            type: event.type,
             timeStamp: event.timeStamp,
             target: target,
             elementId: elementId,
-            x: Math.floor(event.pageX),
-            y: Math.floor(event.pageY),
-            offsetX: event.offsetX === undefined ? null : Math.floor(event.offsetX),
-            offsetY: event.offsetY === undefined ? null : Math.floor(event.offsetY)
+            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
+            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY))
           };
 
           // Add or replace last event if same type (replace events as debouncing mechanism)
-          if(this.debounceEventTypes.indexOf(type) >= 0 && this.eventsReceived.length > 0 && this.eventsReceived[this.eventsReceived.length - 1].type === type) {
+          if(this.eventsReceived.length > 0 && this.eventsReceived[this.eventsReceived.length - 1].type === type && this.debounceEventTypes.indexOf(type) >= 0) {
             this.eventsReceived[this.eventsReceived.length - 1] = receivedEvent;
           } else {
             this.eventsReceived.push(receivedEvent);
           }
         },
-        makePointerEvent: function(event) {
-          var symbolTable = this.symbolClass.symbolTable;
-          return [
-            this.makeStAssociation(symbolTable["type"], symbolTable[event.type]),
-            this.makeStAssociation(symbolTable["timeStamp"], event.timeStamp),
-            this.makeStAssociation(symbolTable["target"], event.target),
-            this.makeStAssociation(symbolTable["elementId"], event.elementId),
-            this.makeStAssociation(symbolTable["x"], event.x),
-            this.makeStAssociation(symbolTable["y"], event.y),
-            this.makeStAssociation(symbolTable["offsetX"], event.offsetX),
-            this.makeStAssociation(symbolTable["offsetY"], event.offsetY)
-          ];
-        },
         handleKeyEvent: function(event) {
-          let type = event.type;
           let modifiers =
             (event.altKey ? 1 : 0) +
             (event.ctrlKey ? 2 : 0) +
@@ -11433,34 +11448,23 @@
 
           // Store event
           let receivedEvent = {
-            makeSt: this.makeKeyEvent,
-            type: type,
+            event: event,
+            type: event.type,
             timeStamp: event.timeStamp,
             modifiers: modifiers,
-            key: event.key,
-            isComposing: event.isComposing
+            key: "" + event.key,
+            isComposing: !!event.isComposing
           };
 
           // Add event
           this.eventsReceived.push(receivedEvent);
         },
-        makeKeyEvent: function(event) {
-          var symbolTable = this.symbolClass.symbolTable;
-          return [
-            this.makeStAssociation(symbolTable["type"], symbolTable[event.type]),
-            this.makeStAssociation(symbolTable["timeStamp"], event.timeStamp),
-            this.makeStAssociation(symbolTable["modifiers"], event.modifiers),
-            this.makeStAssociation(symbolTable["key"], "" + event.key),
-            this.makeStAssociation(symbolTable["isComposing"], !!event.isComposing)
-          ];
-        },
         handleCompositionEvent: function(event) {
-          let type = event.type;
 
           // Store event
           let receivedEvent = {
-            makeSt: this.makeCompositionEvent,
-            type: type,
+            event: event,
+            type: event.type,
             timeStamp: event.timeStamp,
             data: event.data
           };
@@ -11468,47 +11472,33 @@
           // Add event
           this.eventsReceived.push(receivedEvent);
         },
-        makeCompositionEvent: function(event) {
-          var symbolTable = this.symbolClass.symbolTable;
-          return [
-            this.makeStAssociation(symbolTable["type"], symbolTable[event.type]),
-            this.makeStAssociation(symbolTable["timeStamp"], event.timeStamp),
-            this.makeStAssociation(symbolTable["data"], event.data),
-          ];
-        },
-    /*
         handleInputEvent: function(event) {
-          let type = event.type;
 
           // Store event
           let receivedEvent = {
-            makeSt: this.makeInputEvent,
-            type: type,
+            event: event,
+            type: event.type,
             timeStamp: event.timeStamp,
             data: event.data,
-            inputType: event.inputType,
-            isComposing: event.isComposing
+            inputType: "" + event.inputType,
+            isComposing: !!event.isComposing
           };
 
           // Add event
           this.eventsReceived.push(receivedEvent);
         },
-        makeInputEvent: function(event) {
-          var symbolTable = this.symbolClass.symbolTable
-          return [
-            this.makeStAssociation(symbolTable["type"], symbolTable[event.type]),
-            this.makeStAssociation(symbolTable["timeStamp"], event.timeStamp),
-            this.makeStAssociation(symbolTable["data"], event.data),
-            this.makeStAssociation(symbolTable["inputType"], "" + event.inputType),
-            this.makeStAssociation(symbolTable["isComposing"], !!event.isComposing)
-          ];
-        },
-    */
 
         // Browser Event Handler instance methods
         "primitiveEventHandlerRegisterProcess:": function(argCount) {
           if(argCount !== 1) return false;
           this.eventHandlerProcess = this.interpreterProxy.stackValue(0);
+          return this.answerSelf(argCount);
+        },
+        "primitiveEventHandlerRegisterEventClass:": function(argCount) {
+          if(argCount !== 1) return false;
+          let eventClass = this.interpreterProxy.stackValue(0);
+          this.eventClasses.push(eventClass);
+          delete this.eventClassStructures[this.eventNameFromClass(eventClass)];
           return this.answerSelf(argCount);
         },
         "primitiveEventHandlerRegisterInterestIn:": function(argCount) {
@@ -11523,12 +11513,11 @@
 
           // Answer event list and create empty list for future events
           var thisHandle = this;
-          var eventsReceived = this.eventsReceived
+          var result = this.primHandler.makeStArray(this.eventsReceived
             .map(function(event) {
-              return event.makeSt.call(thisHandle, event);
+              return thisHandle.makeStEvent(event);
             })
-          ;
-          var result = this.primHandler.makeStArray(eventsReceived);
+          );
           this.eventsReceived = [];
 
           return this.answer(argCount, result);
