@@ -11579,45 +11579,56 @@
         withJQuery: function(callback) {
           // jQuery and Fomantic might not be loaded yet, retry until loaded
           if(window.jQuery && window.jQuery.prototype.calendar) {
-            callback(window.jQuery);
+            return callback(window.jQuery);
           } else {
             var thisHandle = this;
             window.setTimeout(function() {
               thisHandle.withJQuery(callback);
             }, 100);
+            return null;
           }
         },
-
-        // HTML element instance methods
-        "primitiveHTMLElementBecomeElement:with:": function(argCount) {
-          if(argCount !== 2) return false;
-          let elementType = this.interpreterProxy.stackValue(1).bytesAsString();
-          if(!elementType) return false;
-          let properties = this.domPlugin.asJavascriptObject(this.interpreterProxy.stackValue(0));
-          let receiver = this.interpreterProxy.stackValue(argCount);
-          if(!receiver.domElement) return false;
-          this.withJQuery(function(jQuery) {
-            let jQueryElement = jQuery(receiver.domElement);
-            try {
-              jQueryElement[elementType](properties);
-            } catch(e) {
-              throw Error("unsupported elementType " + elementType);
-            }
-          });
-          return this.answerSelf(argCount);
-        },
-
-        // FUIElement instance methods
-        "primitiveFUIElementShadowElement": function(argCount) {
-          if(argCount !== 0) return false;
-          let receiver = this.interpreterProxy.stackValue(argCount);
-          if(!receiver.domElement || !receiver.domElement.shadowRoot) return false;
-          let firstNonStyleElement = Array.from(receiver.domElement.shadowRoot.children)
+        shadowElement: function(domElement) {
+          if(!domElement || !domElement.shadowRoot) return null;
+          return Array.from(domElement.shadowRoot.children)
             .find(function(childElement) {
               return childElement.localName !== "style";
             })
           ;
-          return this.answer(argCount, this.domPlugin.instanceForElement(firstNonStyleElement, this.domElementClass));
+        },
+
+        // FUI element instance methods
+        "primitiveFUIElementPerformOnElement:as:": function(argCount) {
+          if(argCount !== 2) return false;
+          let properties = this.domPlugin.asJavascriptObject(this.interpreterProxy.stackValue(1));
+          let elementType = this.interpreterProxy.stackValue(0).bytesAsString();
+          if(!elementType) return false;
+          let receiver = this.interpreterProxy.stackValue(argCount);
+          let shadowElement = this.shadowElement(receiver.domElement);
+          if(!shadowElement) return false;
+
+          // Perform behavior
+          let result = this.withJQuery(function(jQuery) {
+            let jQueryElement = jQuery(shadowElement);
+            try {
+              return jQueryElement[elementType](properties);
+            } catch(e) {
+              throw Error("unsupported elementType " + elementType + " or error " + e.message);
+            }
+          });
+
+          // If result looks like the component itself, answer 'self'
+          if(typeof result[elementType] === "function") {
+            result = receiver;
+          }
+          return this.answer(argCount, result);
+        },
+        "primitiveFUIElementShadowElement": function(argCount) {
+          if(argCount !== 0) return false;
+          let receiver = this.interpreterProxy.stackValue(argCount);
+          let shadowElement = this.shadowElement(receiver.domElement);
+          if(!shadowElement) return false;
+          return this.answer(argCount, this.domPlugin.instanceForElement(shadowElement, this.domElementClass));
         }
       };
     }
