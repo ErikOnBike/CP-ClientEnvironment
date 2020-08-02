@@ -10618,6 +10618,8 @@
           this.pointClass = this.interpreterProxy.vm.globalNamed("Point");
           this.stringClass = this.interpreterProxy.vm.globalNamed("String");
           this.symbolClass = this.interpreterProxy.vm.globalNamed("Symbol");
+          this.arrayClass = this.interpreterProxy.vm.globalNamed("Array");
+          this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
           this.addEventHandlers();
           this.runUpdateProcess();
           return true;
@@ -10671,8 +10673,24 @@
             return obj;
           } else if(obj.bytes) {
             return obj.bytesAsString();
+          } else if(obj.sqClass === this.dictionaryClass) {
+            return this.dictionaryAsJavascriptObject(obj);
           }
           throw Error("cannot convert to Javascript object");
+        },
+        dictionaryAsJavascriptObject: function(obj) {
+          var thisHandle = this;
+          var associations = obj.pointers.find(function(pointer) {
+            return pointer && pointer.sqClass === thisHandle.arrayClass;
+          });
+          if(!associations || !associations.pointers || !associations.pointers.forEach) throw Error("Dictionary has unexpected structure");
+          var result = {};
+          associations.pointers.forEach(function(assoc) {
+            if(!assoc.isNil) {
+              result[assoc.pointers[0].bytesAsString()] = thisHandle.asJavascriptObject(assoc.pointers[1]);
+            }
+          });
+          return result;
         },
         makeStPoint: function(x, y) {
           var newPoint = this.interpreterProxy.vm.instantiateClass(this.pointClass, 0);
@@ -10803,7 +10821,7 @@
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
-          return this.answer(argCount, domElement.localName || domElement.tagName);
+          return this.answer(argCount, domElement.localName || domElement.tagName || "--shadow--");
         },
         "primitiveDOMElementId": function(argCount) {
           if(argCount !== 0) return false;
@@ -11358,12 +11376,11 @@
             "mousemove",
             "mouseup",
             "click",        // Explicitly, it is deduced in the Smalltalk code based on other events
-            "keypress"      // Explicitly, it is deduced in the Smalltalk code based on other events
           ].forEach(function(touchType) {
             body.addEventListener(
               touchType,
               function(event) {
-                event.preventDefault();
+                //event.preventDefault();
               }
             );
           });
@@ -11530,5 +11547,86 @@
         } else self.setTimeout(registerCpDOMPlugin, 100);
     }
     registerCpDOMPlugin();
+
+    function CpFomanticPlugin() {
+
+      return {
+        getModuleName: function() { return "CpFomanticPlugin"; },
+        interpreterProxy: null,
+        primHandler: null,
+
+        setInterpreter: function(anInterpreter) {
+          this.interpreterProxy = anInterpreter;
+          this.primHandler = this.interpreterProxy.vm.primHandler;
+          this.domPlugin = Squeak.externalModules.CpDOMPlugin;
+          // @@ToDo: Temporary hack for using the root class of DOM/HTML elements
+          this.domElementClass = this.interpreterProxy.vm.globalNamed("CpDomElement");
+          return true;
+        },
+
+        // Helper methods for answering (and setting the stack correctly)
+        answer: function(argCount, value) {
+          this.interpreterProxy.popthenPush(argCount + 1, this.primHandler.makeStObject(value));
+          return true;
+        },
+        answerSelf: function(argCount) {
+          // Leave self on stack and only pop arguments
+          this.interpreterProxy.pop(argCount);
+          return true;
+        },
+
+        // Helper methods for Fomantic
+        withJQuery: function(callback) {
+          // jQuery and Fomantic might not be loaded yet, retry until loaded
+          if(window.jQuery && window.jQuery.prototype.calendar) {
+            callback(window.jQuery);
+          } else {
+            var thisHandle = this;
+            window.setTimeout(function() {
+              thisHandle.withJQuery(callback);
+            }, 100);
+          }
+        },
+
+        // HTML element instance methods
+        "primitiveHTMLElementBecomeElement:with:": function(argCount) {
+          if(argCount !== 2) return false;
+          let elementType = this.interpreterProxy.stackValue(1).bytesAsString();
+          if(!elementType) return false;
+          let properties = this.domPlugin.asJavascriptObject(this.interpreterProxy.stackValue(0));
+          let receiver = this.interpreterProxy.stackValue(argCount);
+          if(!receiver.domElement) return false;
+          this.withJQuery(function(jQuery) {
+            let jQueryElement = jQuery(receiver.domElement);
+            try {
+              jQueryElement[elementType](properties);
+            } catch(e) {
+              throw Error("unsupported elementType " + elementType);
+            }
+          });
+          return this.answerSelf(argCount);
+        },
+
+        // FUIElement instance methods
+        "primitiveFUIElementShadowElement": function(argCount) {
+          if(argCount !== 0) return false;
+          let receiver = this.interpreterProxy.stackValue(argCount);
+          if(!receiver.domElement || !receiver.domElement.shadowRoot) return false;
+          let firstNonStyleElement = Array.from(receiver.domElement.shadowRoot.children)
+            .find(function(childElement) {
+              return childElement.localName !== "style";
+            })
+          ;
+          return this.answer(argCount, this.domPlugin.instanceForElement(firstNonStyleElement, this.domElementClass));
+        }
+      };
+    }
+
+    function registerCpFomanticPlugin() {
+        if(typeof Squeak === "object" && Squeak.registerExternalModule) {
+            Squeak.registerExternalModule("CpFomanticPlugin", CpFomanticPlugin());
+        } else self.setTimeout(registerCpFomanticPlugin, 100);
+    }
+    registerCpFomanticPlugin();
 
 }());
