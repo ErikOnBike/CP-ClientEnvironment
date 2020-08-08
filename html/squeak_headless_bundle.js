@@ -11368,6 +11368,7 @@
           });
 
           // Prevent default behavior for number of events
+    /*
           [
             "touchstart",   // @@ToDo: add these back later
             "touchmove",    // @@ToDo: add these back later
@@ -11384,6 +11385,7 @@
               }
             );
           });
+    */
         },
         handlePointerEvent: function(event) {
           let type = event.type;
@@ -11605,7 +11607,8 @@
           if(!elementType) return false;
           let receiver = this.interpreterProxy.stackValue(argCount);
           let shadowElement = this.shadowElement(receiver.domElement);
-          if(!shadowElement) return false;
+    // @@ToDo: decide whether to use WebComponents or not
+          if(!shadowElement) shadowElement = receiver.domElement;
 
           // Perform behavior
           let result = this.withJQuery(function(jQuery) {
