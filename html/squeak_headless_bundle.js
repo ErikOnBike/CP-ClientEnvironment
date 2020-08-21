@@ -11231,6 +11231,7 @@
           let thisHandle = this;
           window.requestAnimationFrame(function() {
             thisHandle.handleEvents();
+            thisHandle.handleAnimations();
             thisHandle.runUpdateProcess();
           });
         },
@@ -11245,7 +11246,7 @@
             var scheduler = primHandler.getScheduler();
             var vm = primHandler.vm;
     var start = null;
-    if(window.sessionStorage.getItem("DEBUG")) start = Date.now();
+    if(window.sessionStorage.getItem("DEBUG")) start = performance.now();
             do {
               if(vm.method.compiled) {
                 vm.method.compiled(vm);
@@ -11253,7 +11254,7 @@
                 vm.interpretOne();
               }
             } while(this.eventHandlerProcess === scheduler.pointers[Squeak.ProcSched_activeProcess]);
-    if(start !== null) console.log("Event handler took " + (Date.now() - start) + "ms");
+    if(start !== null) console.log("Event handler took " + (performance.now() - start) + "ms");
           }
         },
 
@@ -11539,7 +11540,37 @@
           this.eventsReceived = [];
 
           return this.answer(argCount, result);
-        }
+        },
+
+        // Browser Animator instance methods
+        "primitiveAnimatorRegisterProcess:": function(argCount) {
+          if(argCount !== 1) return false;
+          this.animatorProcess = this.interpreterProxy.stackValue(0);
+          this.animator = this.interpreterProxy.stackValue(argCount);
+          this.animatorStart = performance.now();
+          return this.answerSelf(argCount);
+        },
+        handleAnimations: function() {
+          if(!this.animatorProcess) {
+            return;
+          }
+
+          // Process animations by resuming the animator process and
+          // run code until animator process goes to sleep again.
+          // This assumes the animator process runs 'quickly'.
+          var primHandler = this.primHandler;
+          primHandler.resume(this.animatorProcess);
+          var scheduler = primHandler.getScheduler();
+          var vm = primHandler.vm;
+          this.animator.pointers[0] = Math.ceil(performance.now() - this.animatorStart);
+          do {
+            if(vm.method.compiled) {
+              vm.method.compiled(vm);
+            } else {
+              vm.interpretOne();
+            }
+          } while(this.animatorProcess === scheduler.pointers[Squeak.ProcSched_activeProcess]);
+        },
       };
     }
 
