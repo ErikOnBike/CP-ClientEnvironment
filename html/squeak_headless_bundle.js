@@ -10754,6 +10754,14 @@
           var document = window.document;
           return this.answer(argCount, this.instanceForElement(document, receiver));
         },
+        "primitiveDOMElementElementWithId:": function(argCount) {
+          if(argCount !== 1) return false;
+          var id = this.interpreterProxy.stackValue(0).bytesAsString();
+          if(!id) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var element = window.document.getElementById(id);
+          return this.answer(argCount, this.instanceForElement(element, receiver));
+        },
 
         // DOM element instance methods
         "primitiveDOMElementAllDescendantsMatching:": function(argCount) {
