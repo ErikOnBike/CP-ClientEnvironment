@@ -10654,9 +10654,9 @@
 
           // Remove camelCase and use dashes, all lowercase
           return aClass.className()
+            .replace(/View$/, "")                 // Remove View as postfix for nicer readability
             .replace(/([a-z])([A-Z])/g, "$1-$2")
             .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
-            .replace(/View$/, "")                 // Remove View as postfix for nicer readability
             .replace(/^([A-Za-z0-9]*)$/, "x-$1")  // Failsafe since custom tag name requires at least one hyphen
             .toLowerCase()
           ;
