@@ -10672,6 +10672,8 @@
             return false;
           } else if(typeof obj === "number") {
             return obj;
+          } else if(obj.isFloat) {
+            return obj.float;
           } else if(obj.bytes) {
             return obj.bytesAsString();
           } else if(obj.sqClass === this.dictionaryClass) {
