@@ -1349,7 +1349,6 @@
                 }
                 this.firstOldObject = oopMap[oldBaseAddr+4];
                 this.lastOldObject = object;
-    console.log("lastOldObject.nextObject " + object.nextObject);
                 this.lastOldObject.nextObject = null; // Add next object pointer as indicator this is in fact an old object
                 this.oldSpaceBytes = objectMemorySize;
             } else {
@@ -1416,7 +1415,6 @@
                 this.oldSpaceBytes -= skippedBytes;
                 this.firstOldObject = oopMap[oldBaseAddr];
                 this.lastOldObject = object;
-    console.log("lastOldObject.nextObject " + object.nextObject);
                 this.lastOldObject.nextObject = null; // Add next object pointer as indicator this is in fact an old object
             }
 
@@ -1437,7 +1435,6 @@
                     object = object.nextObject;
                 }
                 this.lastOldObject = renamedObj;
-    console.log("lastOldObject.nextObject " + renamedObj.nextObject);
                 this.lastOldObject.nextObject = null; // Add next object pointer as indicator this is in fact an old object
             }
 
@@ -1632,7 +1629,6 @@
                 var next = obj.nextObject;
                 if (!next) {// we're done
                     this.lastOldObject = obj;
-    console.log("lastOldObject.nextObject " + obj.nextObject);
                     this.lastOldObject.nextObject = null; // Add next object pointer as indicator this is in fact an old object
                     this.oldSpaceBytes -= removedBytes;
                     this.oldSpaceCount -= removedCount;
@@ -1670,7 +1666,6 @@
             }
             oldObj.nextObject = null;   // might have been in young space
             this.lastOldObject = oldObj;
-    console.log("lastOldObject.nextObject " + oldObj.nextObject);
             this.lastOldObject.nextObject = null; // Add next object pointer as indicator this is in fact an old object
             this.oldSpaceCount += newObjects.length;
             this.gcTenured += newObjects.length;
@@ -10449,10 +10444,27 @@
           window.sessionStorage.setItem(variableName, variableValue);
           return this.answerSelf(argCount);
         },
+        "primitiveEnvironmentRemoveVariableAt:": function(argCount) {
+          if(argCount !== 1) return false;
+          var variableName = this.interpreterProxy.stackValue(0).bytesAsString();
+          if(!variableName) return false;
+          window.sessionStorage.removeItem(variableName);
+          return this.answerSelf(argCount);
+        },
         "primitiveEnvironmentAlert:": function(argCount) {
           if(argCount !== 1) return false;
           var message = this.interpreterProxy.stackValue(0).bytesAsString();
           window.alert(message);
+          return this.answerSelf(argCount);
+        },
+        "primitiveEnvironmentConfirm:": function(argCount) {
+          if(argCount !== 1) return false;
+          var message = this.interpreterProxy.stackValue(0).bytesAsString();
+          return this.answer(argCount, window.confirm(message) === true);
+        },
+        "primitiveEnvironmentReload": function(argCount) {
+          if(argCount !== 0) return false;
+          document.location.reload(true);
           return this.answerSelf(argCount);
         },
 
@@ -10579,7 +10591,7 @@
         },
 
         // System logging
-        "primitiveLog:": function(argCount) {
+        "primitiveEnvironmentLog:": function(argCount) {
           if(argCount !== 1) return false;
           var message = this.interpreterProxy.stackValue(0).bytesAsString();
           console.log(Date.now() + " " + message);
