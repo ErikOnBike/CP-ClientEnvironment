@@ -10776,6 +10776,17 @@
           var element = window.document.getElementById(id);
           return this.answer(argCount, this.instanceForElement(element, receiver));
         },
+        "primitiveDOMElementElementsFromPoint:": function(argCount) {
+          if(argCount !== 1) return false;
+          var point = this.interpreterProxy.stackValue(0);
+          if(point.sqClass !== this.pointClass) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var thisHandle = this;
+          var elements = window.document.elementsFromPoint(point).map(function(element) {
+            return thisHandle.instanceForElement(element, receiver);
+          });
+          return this.answer(argCount, elements);
+        },
 
         // DOM element instance methods
         "primitiveDOMElementAllDescendantsMatching:": function(argCount) {
@@ -11390,6 +11401,18 @@
               }
             );
           });
+          [
+            "focusin",
+            "focusout"
+          ].forEach(function(focusType) {
+            body.addEventListener(
+              focusType,
+              function(event) {
+                thisHandle.handleFocusEvent(event);
+                thisHandle.handleEvents();
+              }
+            );
+          });
 
           // Prevent default behavior for number of events
     /*
@@ -11494,6 +11517,7 @@
             event: event,
             type: event.type,
             timeStamp: event.timeStamp,
+            target: this.instanceForElement(event.target),
             modifiers: modifiers,
             key: "" + event.key,
             isComposing: !!event.isComposing
@@ -11509,6 +11533,7 @@
             event: event,
             type: event.type,
             timeStamp: event.timeStamp,
+            target: this.instanceForElement(event.target),
             data: event.data
           };
 
@@ -11522,8 +11547,22 @@
             event: event,
             type: event.type,
             timeStamp: event.timeStamp,
+            target: this.instanceForElement(event.target),
             data: event.data,
             inputType: "" + event.inputType
+          };
+
+          // Add event
+          this.eventsReceived.push(receivedEvent);
+        },
+        handleFocusEvent: function(event) {
+
+          // Store event
+          let receivedEvent = {
+            event: event,
+            type: event.type,
+            timeStamp: event.timeStamp,
+            target: this.instanceForElement(event.target)
           };
 
           // Add event
