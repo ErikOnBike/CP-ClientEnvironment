@@ -10617,11 +10617,11 @@
         eventClassStructures: {},
         eventsReceived: [],
         debounceEventTypes: [ "pointermove", "dragover", "resize", "scroll", "wheel" ],
-        namespaces: {
+        namespaces: [
           // Default namespaces (for attributes, therefore without elementClass)
-          xlink: { uri: "http://www.w3.org/1999/xlink", elementClass: null },
-          xmlns: { uri: "http://www.w3.org/2000/xmlns/", elementClass: null }
-        },
+          { prefix: "xlink", uri: "http://www.w3.org/1999/xlink", elementClass: null },
+          { prefix: "xmlns", uri: "http://www.w3.org/2000/xmlns/", elementClass: null }
+        ],
         domElementMap: new WeakMap(),
 
         setInterpreter: function(anInterpreter) {
@@ -10631,6 +10631,7 @@
           this.stringClass = this.interpreterProxy.vm.globalNamed("String");
           this.symbolClass = this.interpreterProxy.vm.globalNamed("Symbol");
           this.arrayClass = this.interpreterProxy.vm.globalNamed("Array");
+          this.domElementClass = null; // Only known after installation
           this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
           this.addEventHandlers();
           this.runUpdateProcess();
@@ -10649,16 +10650,23 @@
         },
 
         // Helper methods for namespaces
+        namespaceForURI: function(uri) {
+          return this.namespaces.find(function(namespace) {
+            return namespace.uri === uri;
+          });
+        },
+        namespaceForPrefix: function(prefix) {
+          return this.namespaces.find(function(namespace) {
+            return namespace.prefix === prefix;
+          });
+        },
         namespaceURIFromName: function(name) {
           var separatorIndex = name.indexOf(":");
           if(separatorIndex < 0) {
             return null;
           }
           var prefix = name.slice(0, separatorIndex);
-          if(this.namespaces.hasOwnProperty(prefix)) {
-            return this.namespaces[prefix].uri;
-          }
-          return null;
+          return this.namespaceForPrefix(prefix);
         },
 
         // Helper method to create a tag name from a class name
@@ -10715,7 +10723,13 @@
         },
 
         // DOM element helper methods
-        instanceForElement: function(element, elementClass) {
+        getDomElementClass: function() {
+          if(!this.domElementClass) {
+            this.domElementClass = this.interpreterProxy.vm.globalNamed("CpDomElement");
+          }
+          return this.domElementClass;
+        },
+        instanceForElement: function(element) {
           if(!element) return null;
 
           // Retrieve instance from DOM element map (if available and not GC'ed)
@@ -10723,6 +10737,12 @@
           if(instance === undefined) {
 
             // Create new instance and store in DOM element map
+            var tagClass = window.customElements.get(element.localName);
+            var elementClass = tagClass ? tagClass.sqClass : null;
+            if(!elementClass) {
+              var namespace = this.namespaceForURI(element.namespaceURI);
+              elementClass = namespace ? namespace.elementClass : this.getDomElementClass();
+            }
             instance = this.interpreterProxy.vm.instantiateClass(elementClass, 0);
             instance.domElement = element;
             this.domElementMap.set(element, instance);
@@ -10737,53 +10757,49 @@
           if(!namespaceURI) return false;
           var prefix = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!prefix) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          if(this.namespaces.hasOwnProperty(prefix)) {
+          if(this.namespaceForPrefix(prefix)) {
             console.error("The prefix " + prefix + " is already installed in the browser");
             return false;
           }
-          this.namespaces[prefix] = { elementClass: receiver, uri: namespaceURI };
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          this.namespaces.push({ prefix: prefix, uri: namespaceURI, elementClass: receiver });
           return this.answerSelf(argCount);
         },
         "primitiveDOMElementNewWithTag:": function(argCount) {
           if(argCount !== 1) return false;
           var tagName = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!tagName) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
           var separatorIndex = tagName.indexOf(":");
           var prefix = separatorIndex >= 0 ? tagName.slice(0, separatorIndex) : tagName;
           if(separatorIndex >= 0 && prefix !== "xmlns") {
             tagName = tagName.slice(separatorIndex + 1);
           }
-          var namespaceURI = this.namespaces.hasOwnProperty(prefix) ? this.namespaces[prefix].uri : null;
-          var element = !namespaceURI || prefix === "xhtml" ?
+          var namespace = this.namespaceForPrefix(prefix);
+          var element = !namespace || prefix === "xhtml" ?
             window.document.createElement(tagName) :
-            window.document.createElementNS(namespaceURI, tagName)
+            window.document.createElementNS(namespace.uri, tagName)
           ;
-          return this.answer(argCount, this.instanceForElement(element, receiver));
+          return this.answer(argCount, this.instanceForElement(element));
         },
         "primitiveDOMElementDocument": function(argCount) {
           if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
           var document = window.document;
-          return this.answer(argCount, this.instanceForElement(document, receiver));
+          return this.answer(argCount, this.instanceForElement(document));
         },
         "primitiveDOMElementElementWithId:": function(argCount) {
           if(argCount !== 1) return false;
           var id = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!id) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
           var element = window.document.getElementById(id);
-          return this.answer(argCount, this.instanceForElement(element, receiver));
+          return this.answer(argCount, this.instanceForElement(element));
         },
         "primitiveDOMElementElementsFromPoint:": function(argCount) {
           if(argCount !== 1) return false;
           var point = this.interpreterProxy.stackValue(0);
           if(point.sqClass !== this.pointClass) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
           var thisHandle = this;
           var elements = window.document.elementsFromPoint(point).map(function(element) {
-            return thisHandle.instanceForElement(element, receiver);
+            return thisHandle.instanceForElement(element);
           });
           return this.answer(argCount, elements);
         },
@@ -10793,13 +10809,12 @@
           if(argCount !== 1) return false;
           var querySelector = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!querySelector) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          var domElement = receiver.domElement;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           var thisHandle = this;
           var matchingElements = Array.from(domElement.querySelectorAll(querySelector))
             .map(function(matchingElement) {
-              return thisHandle.instanceForElement(matchingElement, receiver.sqClass);
+              return thisHandle.instanceForElement(matchingElement);
             })
           ;
           return this.answer(argCount, matchingElements);
@@ -10808,48 +10823,43 @@
           if(argCount !== 1) return false;
           var querySelector = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!querySelector) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          var domElement = receiver.domElement;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           var firstMatchingElement = domElement.querySelector(querySelector);
-          return this.answer(argCount, this.instanceForElement(firstMatchingElement, receiver.sqClass));
+          return this.answer(argCount, this.instanceForElement(firstMatchingElement));
         },
         "primitiveDOMElementParent": function(argCount) {
           if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          var domElement = receiver.domElement;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           var parentElement = domElement.parentElement;
-          return this.answer(argCount, this.instanceForElement(parentElement, receiver.sqClass));
+          return this.answer(argCount, this.instanceForElement(parentElement));
         },
         "primitiveDOMElementChildren": function(argCount) {
           if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          var domElement = receiver.domElement;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           var thisHandle = this;
           var childElements = Array.from(domElement.children)
             .map(function(childElement) {
-              return thisHandle.instanceForElement(childElement, receiver.sqClass);
+              return thisHandle.instanceForElement(childElement);
             })
           ;
           return this.answer(argCount, childElements);
         },
         "primitiveDOMElementPreviousSibling": function(argCount) {
           if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          var domElement = receiver.domElement;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           var siblingElement = domElement.previousElementSibling;
-          return this.answer(argCount, this.instanceForElement(siblingElement, receiver.sqClass));
+          return this.answer(argCount, this.instanceForElement(siblingElement));
         },
         "primitiveDOMElementNextSibling": function(argCount) {
           if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          var domElement = receiver.domElement;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           var siblingElement = domElement.nextElementSibling;
-          return this.answer(argCount, this.instanceForElement(siblingElement, receiver.sqClass));
+          return this.answer(argCount, this.instanceForElement(siblingElement));
         },
         "primitiveDOMElementTag": function(argCount) {
           if(argCount !== 0) return false;
@@ -11035,10 +11045,9 @@
         },
         "primitiveDOMElementClone": function(argCount) {
           if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          var domElement = receiver.domElement;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
-          return this.answer(argCount, this.instanceForElement(domElement.cloneNode(true), receiver.sqClass));
+          return this.answer(argCount, this.instanceForElement(domElement.cloneNode(true)));
         },
         "primitiveDOMElementAppendChild:": function(argCount) {
           if(argCount !== 1) return false;
@@ -11094,28 +11103,20 @@
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
-          // @@ToDo: Hack for the moment to give input field of CpCursor focus
-          var cursor;
-          if(domElement.localName === "cp-cursor" && domElement.shadowRoot && (cursor = domElement.shadowRoot.querySelector("input"))) {
-            cursor.focus();
-          } else {
-            domElement.focus();
-          }
+          domElement.focus();
           return this.answerSelf(argCount);
         },
 
         // HTMLElement class methods
         "primitiveHTMLElementDocumentHead": function(argCount) {
           if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
           var documentHead = window.document.head;
-          return this.answer(argCount, this.instanceForElement(documentHead, receiver));
+          return this.answer(argCount, this.instanceForElement(documentHead));
         },
         "primitiveHTMLElementDocumentBody": function(argCount) {
           if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
           var documentBody = window.document.body;
-          return this.answer(argCount, this.instanceForElement(documentBody, receiver));
+          return this.answer(argCount, this.instanceForElement(documentBody));
         },
 
         // WebComponent class methods
@@ -11144,6 +11145,7 @@
                 }
               }
             };
+            customClass.sqClass = receiver;
             window.customElements.define(customTag, customClass);
           } catch(e) {
             console.error("Failed to create new custom element with tag " + customTag, e);
@@ -11161,6 +11163,12 @@
           var receiver = this.interpreterProxy.stackValue(argCount);
           var tagName = this.tagNameFromClass(receiver);
           return this.answer(argCount, tagName);
+        },
+        "primitiveWebComponentShadowRoot": function(argCount) {
+          if(argCount !== 0) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+          return this.answer(argCount, this.instanceForElement(domElement.shadowRoot));
         },
 
         // TemplateComponent class methods
