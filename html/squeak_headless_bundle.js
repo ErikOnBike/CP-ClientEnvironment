@@ -10638,6 +10638,28 @@
           return true;
         },
 
+        // Helper method for running a process uninterrupted
+        runUninterrupted: function(process, endTime) {
+          if(!process) {
+            return;
+          }
+
+          // Run the specified process until the process goes
+          // to sleep again or the end time is reached.
+          // This 'runner' assumes the process runs 'quickly'.
+          var primHandler = this.primHandler;
+          primHandler.resume(process);
+          var scheduler = primHandler.getScheduler();
+          var vm = primHandler.vm;
+          do {
+            if(vm.method.compiled) {
+              vm.method.compiled(vm);
+            } else {
+              vm.interpretOne();
+            }
+          } while(process === scheduler.pointers[Squeak.ProcSched_activeProcess] && (endTime === undefined || performance.now() < endTime));
+        },
+
         // Helper methods for answering (and setting the stack correctly)
         answer: function(argCount, value) {
           this.interpreterProxy.popthenPush(argCount + 1, this.primHandler.makeStObject(value));
@@ -10694,7 +10716,7 @@
             return obj;
           } else if(obj.isFloat) {
             return obj.float;
-          } else if(obj.bytes) {
+          } else if(obj.bytes || obj.sqClass === this.stringClass) {
             return obj.bytesAsString();
           } else if(obj.sqClass === this.dictionaryClass) {
             return this.dictionaryAsJavascriptObject(obj);
@@ -11272,30 +11294,20 @@
         runUpdateProcess: function() {
           let thisHandle = this;
           window.requestAnimationFrame(function() {
+            var start = performance.now();
             thisHandle.handleEvents();
-            thisHandle.handleAnimations();
+            // The total time spent in an animation frame should not be more than 16.666 ms.
+            // Keep a little extra room and therefor limit execution to 16ms.
+            // Transitions are less important than event handling.
+            thisHandle.handleTransitions(start + 16);
             thisHandle.runUpdateProcess();
           });
         },
         handleEvents: function() {
           if(this.eventHandlerProcess && this.eventsReceived.length > 0) {
-
-            // Process events by resuming the event process and
-            // run code until event process goes to sleep again.
-            // This assumes the event process runs 'quickly'.
-            var primHandler = this.primHandler;
-            primHandler.resume(this.eventHandlerProcess);
-            var scheduler = primHandler.getScheduler();
-            var vm = primHandler.vm;
     var start = null;
     if(window.sessionStorage.getItem("DEBUG")) start = performance.now();
-            do {
-              if(vm.method.compiled) {
-                vm.method.compiled(vm);
-              } else {
-                vm.interpretOne();
-              }
-            } while(this.eventHandlerProcess === scheduler.pointers[Squeak.ProcSched_activeProcess]);
+            this.runUninterrupted(this.eventHandlerProcess);
     if(start !== null) console.log("Event handler took " + (performance.now() - start) + "ms");
           }
         },
@@ -11612,35 +11624,20 @@
           return this.answer(argCount, result);
         },
 
-        // Browser Animator instance methods
-        "primitiveAnimatorRegisterProcess:": function(argCount) {
+        // Transition class method
+        "primitiveTransitionRegisterProcess:": function(argCount) {
           if(argCount !== 1) return false;
-          this.animatorProcess = this.interpreterProxy.stackValue(0);
-          this.animator = this.interpreterProxy.stackValue(argCount);
-          this.animatorStart = performance.now();
+          this.transitionProcess = this.interpreterProxy.stackValue(0);
+          this.transitionStartTick = performance.now();
           return this.answerSelf(argCount);
         },
-        handleAnimations: function() {
-          if(!this.animatorProcess) {
-            return;
-          }
-
-          // Process animations by resuming the animator process and
-          // run code until animator process goes to sleep again.
-          // This assumes the animator process runs 'quickly'.
-          var primHandler = this.primHandler;
-          primHandler.resume(this.animatorProcess);
-          var scheduler = primHandler.getScheduler();
-          var vm = primHandler.vm;
-          this.animator.pointers[0] = Math.ceil(performance.now() - this.animatorStart);
-          do {
-            if(vm.method.compiled) {
-              vm.method.compiled(vm);
-            } else {
-              vm.interpretOne();
-            }
-          } while(this.animatorProcess === scheduler.pointers[Squeak.ProcSched_activeProcess]);
+        "primitiveTransitionTickCount": function(argCount) {
+          if(argCount !== 0) return false;
+          return this.answer(argCount, Math.ceil(performance.now() - this.transitionStartTick));
         },
+        handleTransitions: function(endTime) {
+          this.runUninterrupted(this.transitionProcess, endTime);
+        }
       };
     }
 
