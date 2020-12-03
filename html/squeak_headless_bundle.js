@@ -10751,8 +10751,13 @@
           }
           return this.domElementClass;
         },
-        instanceForElement: function(element) {
+        instanceForElement: function(element, elementClass) {
           if(!element) return null;
+
+          // Retrieve instance from DOM element itself
+          if(element.__cp_element) {
+            return element.__cp_element;
+          }
 
           // Retrieve instance from DOM element map (if available and not GC'ed)
           var instance = this.domElementMap.get(element);
@@ -10760,7 +10765,7 @@
 
             // Create new instance and store in DOM element map
             var tagClass = window.customElements.get(element.localName);
-            var elementClass = tagClass ? tagClass.sqClass : null;
+            var elementClass = tagClass ? tagClass.sqClass : elementClass;
             if(!elementClass) {
               var namespace = this.namespaceForURI(element.namespaceURI);
               elementClass = namespace ? namespace.elementClass : this.getDomElementClass();
@@ -10801,7 +10806,8 @@
             window.document.createElement(tagName) :
             window.document.createElementNS(namespace.uri, tagName)
           ;
-          return this.answer(argCount, this.instanceForElement(element));
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          return this.answer(argCount, this.instanceForElement(element, receiver));
         },
         "primitiveDOMElementDocument": function(argCount) {
           if(argCount !== 0) return false;
@@ -11126,6 +11132,28 @@
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           domElement.focus();
+          return this.answerSelf(argCount);
+        },
+        "primitiveDOMElementRegisterInterestIn:": function(argCount) {
+          if(argCount !== 1) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var domElement = receiver.domElement;
+          if(!domElement) return false;
+          var eventClass = this.interpreterProxy.stackValue(0);
+          var eventName = this.eventNameFromClass(eventClass);
+          if(!domElement.__cp_events) {
+            domElement.__cp_events = new Set();
+          }
+          domElement.__cp_events.add(eventName);
+          domElement.__cp_element = receiver;
+          return this.answerSelf(argCount);
+        },
+        "primitiveDOMElementUnRegisterAllInterest": function(argCount) {
+          if(argCount !== 0) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+          delete domElement.__cp_events;
+          delete domElement.__cp_element;
           return this.answerSelf(argCount);
         },
 
@@ -11455,64 +11483,23 @@
     */
         },
         handlePointerEvent: function(event) {
-          let type = event.type;
 
-          // Find target and element which received the event.
-          // The target should be a WebComponent.
-          // The element can be a HTML element with a given id which actually received the event.
-          let target = null;
-          let elementId = null;
-
-          // @@ToDo: Refactor the two very similar blocks below
-          // Start searching for a target/element using composedPath because of shadow DOM
-          let composedPath = (event.composedPath && event.composedPath()) || [];
-          if(composedPath.length > 0) {
-            let index = 0;
-            let node = composedPath[index];
-            while(node && !target) {
-
-              // Keep first element with id
-              if(!elementId && node.id) {
-                elementId = node.id;
-              }
-
-              // Keep first element which is interesting
-              if(node.__cp_interesting) {
-                target = this.domElementMap.get(node);
-              }
-
-              node = composedPath[++index];
-            }
-          } else {
-            let node = event.target;
-            while(node && !target) {
-
-              // Keep first element with id
-              if(!elementId && node.id) {
-                elementId = node.id;
-              }
-
-              // Keep first element which is interesting
-              if(node.__cp_interesting) {
-                target = this.domElementMap.get(node);
-              }
-
-              node = node.parentElement;
-            }
-          }
-
-          // No interest in current event
-          if(!target) {
+          // Find element which is interested in the event
+          // and target which received the event
+          let element = this.findInterestedElement(event);
+          if(!element) {
             return;
           }
+          let target = this.findTarget(event);
 
           // Store event
+          let type = event.type;
           let receivedEvent = {
             event: event,
-            type: event.type,
+            type: type,
             timeStamp: event.timeStamp,
             target: target,
-            elementId: elementId,
+            element: element,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
             offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY))
           };
@@ -11525,6 +11512,16 @@
           }
         },
         handleKeyEvent: function(event) {
+
+          // Find element which is interested in the event
+          // and target which received the event
+          let element = this.findInterestedElement(event);
+          if(!element) {
+            return;
+          }
+          let target = this.findTarget(event);
+
+          // Encode modifiers
           let modifiers =
             (event.altKey ? 1 : 0) +
             (event.ctrlKey ? 2 : 0) +
@@ -11537,7 +11534,9 @@
             event: event,
             type: event.type,
             timeStamp: event.timeStamp,
-            target: this.instanceForElement(event.target),
+            target: target,
+            element: element,
+            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
             modifiers: modifiers,
             key: "" + event.key,
             isComposing: !!event.isComposing
@@ -11548,12 +11547,22 @@
         },
         handleCompositionEvent: function(event) {
 
+          // Find element which is interested in the event
+          // and target which received the event
+          let element = this.findInterestedElement(event);
+          if(!element) {
+            return;
+          }
+          let target = this.findTarget(event);
+
           // Store event
           let receivedEvent = {
             event: event,
             type: event.type,
             timeStamp: event.timeStamp,
-            target: this.instanceForElement(event.target),
+            target: event.target,
+            element: element,
+            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
             data: event.data
           };
 
@@ -11562,12 +11571,22 @@
         },
         handleInputEvent: function(event) {
 
+          // Find element which is interested in the event
+          // and target which received the event
+          let element = this.findInterestedElement(event);
+          if(!element) {
+            return;
+          }
+          let target = this.findTarget(event);
+
           // Store event
           let receivedEvent = {
             event: event,
             type: event.type,
             timeStamp: event.timeStamp,
-            target: this.instanceForElement(event.target),
+            target: target,
+            element: element,
+            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
             data: event.data,
             inputType: "" + event.inputType
           };
@@ -11577,39 +11596,83 @@
         },
         handleFocusEvent: function(event) {
 
+          // Find element which is interested in the event
+          // and target which received the event
+          let element = this.findInterestedElement(event);
+          if(!element) {
+            return;
+          }
+          let target = this.findTarget(event);
+
           // Store event
           let receivedEvent = {
             event: event,
             type: event.type,
             timeStamp: event.timeStamp,
-            target: this.instanceForElement(event.target)
+            target: target,
+            element: element,
+            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0))
           };
 
           // Add event
           this.eventsReceived.push(receivedEvent);
         },
+        findInterestedElement: function(event) {
+          let type = event.type;
 
-        // Browser Event Handler instance methods
-        "primitiveEventHandlerRegisterProcess:": function(argCount) {
+          // Start searching for element using composedPath because of shadow DOM
+          let composedPath = (event.composedPath && event.composedPath()) || [];
+          if(composedPath.length > 0) {
+            let index = 0;
+            let node = composedPath[index];
+            while(node) {
+
+              // Keep first element which is interested
+              if(node.__cp_events && node.__cp_events.has(type)) {
+                return this.instanceForElement(node);
+              } else {
+                node = composedPath[++index];
+              }
+            }
+          } else {
+            let node = event.target;
+            while(node) {
+
+              // Keep first element which is interested
+              if(node.__cp_events && node.__cp_events.has(type)) {
+                return this.instanceForElement(node);
+              } else {
+                node = node.parentElement;
+              }
+            }
+          }
+          return null;
+        },
+        findTarget: function(event) {
+
+          // Start searching for target using composedPath because of shadow DOM
+          let composedPath = (event.composedPath && event.composedPath()) || [];
+          if(composedPath.length > 0) {
+            return this.instanceForElement(composedPath[0]);
+          } else {
+            return this.instanceForElement(event.target);
+          }
+        },
+
+        // Event class methods
+        "primitiveEventRegisterProcess:": function(argCount) {
           if(argCount !== 1) return false;
           this.eventHandlerProcess = this.interpreterProxy.stackValue(0);
           return this.answerSelf(argCount);
         },
-        "primitiveEventHandlerRegisterEventClass:": function(argCount) {
+        "primitiveEventRegisterClass:": function(argCount) {
           if(argCount !== 1) return false;
           let eventClass = this.interpreterProxy.stackValue(0);
           this.eventClasses.push(eventClass);
           delete this.eventClassStructures[this.eventNameFromClass(eventClass)];
           return this.answerSelf(argCount);
         },
-        "primitiveEventHandlerRegisterInterestIn:": function(argCount) {
-          if(argCount !== 1) return false;
-          var domElement = this.interpreterProxy.stackValue(0).domElement;
-          if(!domElement) return false;
-          domElement.__cp_interesting = true;
-          return this.answerSelf(argCount);
-        },
-        "primitiveEventHandlerLatestEvents": function(argCount) {
+        "primitiveEventLatestEvents": function(argCount) {
           if(argCount !== 0) return false;
 
           // Answer event list and create empty list for future events
