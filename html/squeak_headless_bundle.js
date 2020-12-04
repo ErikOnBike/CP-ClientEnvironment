@@ -11134,20 +11134,6 @@
           domElement.focus();
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementRegisterInterestIn:": function(argCount) {
-          if(argCount !== 1) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          var domElement = receiver.domElement;
-          if(!domElement) return false;
-          var eventClass = this.interpreterProxy.stackValue(0);
-          var eventName = this.eventNameFromClass(eventClass);
-          if(!domElement.__cp_events) {
-            domElement.__cp_events = new Set();
-          }
-          domElement.__cp_events.add(eventName);
-          domElement.__cp_element = receiver;
-          return this.answerSelf(argCount);
-        },
         "primitiveDOMElementUnRegisterAllInterest": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
@@ -11670,6 +11656,20 @@
           let eventClass = this.interpreterProxy.stackValue(0);
           this.eventClasses.push(eventClass);
           delete this.eventClassStructures[this.eventNameFromClass(eventClass)];
+          return this.answerSelf(argCount);
+        },
+        "primitiveEventAddListenerTo:": function(argCount) {
+          if(argCount !== 1) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var element = this.interpreterProxy.stackValue(0);
+          var domElement = element.domElement;
+          if(!domElement) return false;
+          var eventName = this.eventNameFromClass(receiver);
+          if(!domElement.__cp_events) {
+            domElement.__cp_events = new Set();
+          }
+          domElement.__cp_events.add(eventName);
+          domElement.__cp_element = element;
           return this.answerSelf(argCount);
         },
         "primitiveEventLatestEvents": function(argCount) {
