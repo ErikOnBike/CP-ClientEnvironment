@@ -11400,6 +11400,7 @@
           });
           [
             "keydown",
+            "keypress",
             "keyup"
           ].forEach(function(inputType) {
             body.addEventListener(
@@ -11487,7 +11488,9 @@
             target: target,
             element: element,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
-            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY))
+            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY)),
+            pointerId: event.pointerId,
+            pointerType: "" + event.pointerType
           };
 
           // Add or replace last event if same type (replace events as debouncing mechanism)
