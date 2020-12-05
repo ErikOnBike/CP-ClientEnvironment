@@ -11450,24 +11450,23 @@
           });
 
           // Prevent default behavior for number of events
-    /*
           [
-            "touchstart",   // @@ToDo: add these back later
-            "touchmove",    // @@ToDo: add these back later
-            "touchend",     // @@ToDo: add these back later
-            "mousedown",
-            "mousemove",
-            "mouseup",
+    //        "touchstart",   // @@ToDo: add these back later
+    //        "touchmove",    // @@ToDo: add these back later
+    //        "touchend",     // @@ToDo: add these back later
+    //        "mousedown",
+    //        "mousemove",
+    //        "mouseup",
+            "pointermove",
             "click",        // Explicitly, it is deduced in the Smalltalk code based on other events
           ].forEach(function(touchType) {
             body.addEventListener(
               touchType,
               function(event) {
-                //event.preventDefault();
+                event.preventDefault();
               }
             );
           });
-    */
         },
         handlePointerEvent: function(event) {
 
