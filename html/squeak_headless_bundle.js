@@ -11335,7 +11335,7 @@
 
           // Create new instance and connect original event
           let newEvent = this.interpreterProxy.vm.instantiateClass(eventClassStructure.eventClass, 0);
-          newEvent.event = event;
+          newEvent.event = event.event;
 
           // Set event properties
           let primHandler = this.primHandler;
@@ -11450,23 +11450,24 @@
           });
 
           // Prevent default behavior for number of events
+    /*
           [
-    //        "touchstart",   // @@ToDo: add these back later
-    //        "touchmove",    // @@ToDo: add these back later
-    //        "touchend",     // @@ToDo: add these back later
-    //        "mousedown",
-    //        "mousemove",
-    //        "mouseup",
-            "pointermove",
+            "touchstart",   // @@ToDo: add these back later
+            "touchmove",    // @@ToDo: add these back later
+            "touchend",     // @@ToDo: add these back later
+            "mousedown",
+            "mousemove",
+            "mouseup",
             "click",        // Explicitly, it is deduced in the Smalltalk code based on other events
           ].forEach(function(touchType) {
             body.addEventListener(
               touchType,
               function(event) {
-                event.preventDefault();
+                //event.preventDefault();
               }
             );
           });
+    */
         },
         handlePointerEvent: function(event) {
 
@@ -11689,7 +11690,18 @@
           return this.answer(argCount, result);
         },
 
-        // Transition class method
+        // Event instance methods
+        "primitiveEventPreventDefault": function(argCount) {
+          if(argCount !== 0) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var event = receiver.event;
+          if(event) {
+            event.preventDefault();
+          }
+          return this.answerSelf(argCount);
+        },
+
+        // Transition class methods
         "primitiveTransitionRegisterProcess:": function(argCount) {
           if(argCount !== 1) return false;
           this.transitionProcess = this.interpreterProxy.stackValue(0);
