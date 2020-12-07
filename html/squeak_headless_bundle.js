@@ -11471,10 +11471,10 @@
         },
         handlePointerEvent: function(event) {
 
-          // Find element which is interested in the event
+          // Find elements which are interested in the event
           // and target which received the event
-          let element = this.findInterestedElement(event);
-          if(!element) {
+          let elements = this.findInterestedElements(event);
+          if(elements.length === 0) {
             return;
           }
           let target = this.findTarget(event);
@@ -11486,7 +11486,8 @@
             type: type,
             timeStamp: event.timeStamp,
             target: target,
-            element: element,
+            elements: this.primHandler.makeStArray(elements),
+            currentElementIndex: 1,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
             offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY)),
             pointerId: event.pointerId,
@@ -11502,10 +11503,10 @@
         },
         handleKeyEvent: function(event) {
 
-          // Find element which is interested in the event
+          // Find elements which are interested in the event
           // and target which received the event
-          let element = this.findInterestedElement(event);
-          if(!element) {
+          let elements = this.findInterestedElements(event);
+          if(elements.length === 0) {
             return;
           }
           let target = this.findTarget(event);
@@ -11524,7 +11525,8 @@
             type: event.type,
             timeStamp: event.timeStamp,
             target: target,
-            element: element,
+            elements: this.primHandler.makeStArray(elements),
+            currentElementIndex: 1,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
             modifiers: modifiers,
             key: "" + event.key,
@@ -11536,10 +11538,10 @@
         },
         handleCompositionEvent: function(event) {
 
-          // Find element which is interested in the event
+          // Find elements which are interested in the event
           // and target which received the event
-          let element = this.findInterestedElement(event);
-          if(!element) {
+          let elements = this.findInterestedElements(event);
+          if(elements.length === 0) {
             return;
           }
           let target = this.findTarget(event);
@@ -11550,7 +11552,8 @@
             type: event.type,
             timeStamp: event.timeStamp,
             target: event.target,
-            element: element,
+            elements: this.primHandler.makeStArray(elements),
+            currentElementIndex: 1,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
             data: event.data
           };
@@ -11560,10 +11563,10 @@
         },
         handleInputEvent: function(event) {
 
-          // Find element which is interested in the event
+          // Find elements which are interested in the event
           // and target which received the event
-          let element = this.findInterestedElement(event);
-          if(!element) {
+          let elements = this.findInterestedElements(event);
+          if(elements.length === 0) {
             return;
           }
           let target = this.findTarget(event);
@@ -11574,7 +11577,8 @@
             type: event.type,
             timeStamp: event.timeStamp,
             target: target,
-            element: element,
+            elements: this.primHandler.makeStArray(elements),
+            currentElementIndex: 1,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
             data: event.data,
             inputType: "" + event.inputType
@@ -11585,10 +11589,10 @@
         },
         handleFocusEvent: function(event) {
 
-          // Find element which is interested in the event
+          // Find elements which are interested in the event
           // and target which received the event
-          let element = this.findInterestedElement(event);
-          if(!element) {
+          let elements = this.findInterestedElements(event);
+          if(elements.length === 0) {
             return;
           }
           let target = this.findTarget(event);
@@ -11599,17 +11603,19 @@
             type: event.type,
             timeStamp: event.timeStamp,
             target: target,
-            element: element,
+            elements: this.primHandler.makeStArray(elements),
+            currentElementIndex: 1,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0))
           };
 
           // Add event
           this.eventsReceived.push(receivedEvent);
         },
-        findInterestedElement: function(event) {
+        findInterestedElements: function(event) {
           let type = event.type;
+          let elements = [];
 
-          // Start searching for element using composedPath because of shadow DOM
+          // Start searching for elements using composedPath because of shadow DOM
           let composedPath = (event.composedPath && event.composedPath()) || [];
           if(composedPath.length > 0) {
             let index = 0;
@@ -11618,10 +11624,9 @@
 
               // Keep first element which is interested
               if(node.__cp_events && node.__cp_events.has(type)) {
-                return this.instanceForElement(node);
-              } else {
-                node = composedPath[++index];
+                elements.push(this.instanceForElement(node));
               }
+              node = composedPath[++index];
             }
           } else {
             let node = event.target;
@@ -11629,13 +11634,12 @@
 
               // Keep first element which is interested
               if(node.__cp_events && node.__cp_events.has(type)) {
-                return this.instanceForElement(node);
-              } else {
-                node = node.parentElement;
+                elements.push(this.instanceForElement(node));
               }
+              node = node.parentElement;
             }
           }
-          return null;
+          return elements;
         },
         findTarget: function(event) {
 
