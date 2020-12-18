@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-  <script type="module" src="/static/squeak_headless_bundle.js"></script>
+  <script type="module" src="./squeak_headless_bundle.js"></script>
   <script>
     // Set application identifier
     let appNameFromUrl = document.location.search.slice(1);
@@ -28,7 +28,7 @@
 
     // Load and start image if this page and its scripts are loaded
     window.addEventListener("load", function() {
-      self.SqueakJS.fetchImageAndRun("/static/client-environment.image", { ignoreQuit: false });
+      self.SqueakJS.fetchImageAndRun("./client-environment.image", { ignoreQuit: false });
     });
   </script>
 </head>
