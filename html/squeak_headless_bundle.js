@@ -11425,6 +11425,17 @@
             );
           });
           [
+            "change"
+          ].forEach(function(inputType) {
+            body.addEventListener(
+              inputType,
+              function(event) {
+                thisHandle.handleChangeEvent(event);
+                thisHandle.handleEvents();
+              }
+            );
+          });
+          [
             "beforeinput",
             "input"
           ].forEach(function(inputType) {
@@ -11556,6 +11567,30 @@
             currentElementIndex: 1,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
             data: event.data
+          };
+
+          // Add event
+          this.eventsReceived.push(receivedEvent);
+        },
+        handleChangeEvent: function(event) {
+
+          // Find elements which are interested in the event
+          // and target which received the event
+          let elements = this.findInterestedElements(event);
+          if(elements.length === 0) {
+            return;
+          }
+          let target = this.findTarget(event);
+
+          // Store event
+          let receivedEvent = {
+            event: event,
+            type: event.type,
+            timeStamp: event.timeStamp,
+            target: target,
+            elements: this.primHandler.makeStArray(elements),
+            currentElementIndex: 1,
+            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0))
           };
 
           // Add event
