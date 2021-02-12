@@ -10744,6 +10744,14 @@
           return newPoint;
         },
 
+        // Point helper methods
+        getPointX: function(stPoint) {
+          return stPoint.pointers[0];
+        },
+        getPointY: function(stPoint) {
+          return stPoint.pointers[1];
+        },
+
         // DOM element helper methods
         getDomElementClass: function() {
           if(!this.domElementClass) {
@@ -10826,7 +10834,7 @@
           var point = this.interpreterProxy.stackValue(0);
           if(point.sqClass !== this.pointClass) return false;
           var thisHandle = this;
-          var elements = window.document.elementsFromPoint(point).map(function(element) {
+          var elements = window.document.elementsFromPoint(this.getPointX(point), this.getPointY(point)).map(function(element) {
             return thisHandle.instanceForElement(element);
           });
           return this.answer(argCount, elements);
