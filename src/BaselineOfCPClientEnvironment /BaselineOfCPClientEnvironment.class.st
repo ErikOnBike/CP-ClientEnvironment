@@ -6,8 +6,9 @@ Class {
 
 { #category : #baselines }
 BaselineOfCPClientEnvironment >> baseline: spec [
-
 	<baseline>
+	
+	^self
 
 	
 ]
