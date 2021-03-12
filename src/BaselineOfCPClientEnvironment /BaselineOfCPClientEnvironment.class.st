@@ -8,10 +8,5 @@ Class {
 BaselineOfCPClientEnvironment >> baseline: spec [
 	<baseline>
 	
-	spec for: #common do: [
-		spec
-			package: 'CPClientEnvironment'
-	 ]
-
 	
 ]
