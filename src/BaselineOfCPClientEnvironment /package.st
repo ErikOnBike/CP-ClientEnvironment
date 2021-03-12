@@ -1,1 +1,1 @@
-Package { #name : #'BaselineOfCPClientEnvironment ' }
+Package { #name : #BaselineOfCPClientEnvironment }
