@@ -16,7 +16,8 @@
     }
 
     // Set server location
-    window.sessionStorage.setItem("SERVER_URL", "ws://" + document.location.host + "/io");
+    window.sessionStorage.setItem("SERVER_URL", document.location.protocol.replace("http", "ws") + "//" + document.location.host + "/io");
+
 
     // Set OS/platform identifier
     let platform = navigator.platform;
