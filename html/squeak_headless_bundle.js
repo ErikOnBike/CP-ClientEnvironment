@@ -11543,6 +11543,7 @@
         getModuleName: function() { return "CpDOMPlugin"; },
         interpreterProxy: null,
         primHandler: null,
+        customTagMap: {},
         eventClasses: [],
         eventClassStructures: {},
         eventsReceived: [],
@@ -11689,7 +11690,7 @@
           }
           return this.domElementClass;
         },
-        instanceForElement: function(element, elementClass) {
+        instanceForElement: function(element) {
           if(!element) return null;
 
           // Retrieve instance from DOM element itself
@@ -11702,8 +11703,7 @@
           if(instance === undefined) {
 
             // Create new instance and store in DOM element map
-            var tagClass = window.customElements.get(element.localName);
-            var elementClass = tagClass ? tagClass.sqClass : elementClass;
+            var elementClass = this.customTagMap[element.localName];
             if(!elementClass) {
               var namespace = this.namespaceForURI(element.namespaceURI);
               elementClass = namespace ? namespace.elementClass : this.getDomElementClass();
@@ -11744,8 +11744,7 @@
             window.document.createElement(tagName) :
             window.document.createElementNS(namespace.uri, tagName)
           ;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          return this.answer(argCount, this.instanceForElement(element, receiver));
+          return this.answer(argCount, this.instanceForElement(element));
         },
         "primitiveDOMElementDocument": function(argCount) {
           if(argCount !== 0) return false;
@@ -12102,37 +12101,18 @@
             return false;
           }
 
-          // Create custom class
+          // Keep track of custom tag and Smalltalk class
           var customTag = this.tagNameFromClass(receiver);
-          var customClass = window.customElements.get(customTag);
-          if(customClass) {
-            console.error("A custom class already exists for tag: " + customTag);
-            return false;
-          }
-          try {
-            customClass = class extends HTMLElement {
-              constructor() {
-                super();
-
-                // Attach shadow DOM and copy template (if available)
-                var shadowRoot = this.attachShadow({ mode: "open" });
-                if(receiver.templateElement) {
-                  shadowRoot.appendChild(receiver.templateElement.cloneNode(true));
-                }
-              }
-            };
-            customClass.sqClass = receiver;
-            window.customElements.define(customTag, customClass);
-          } catch(e) {
-            console.error("Failed to create new custom element with tag " + customTag, e);
-            return false;
-          }
-
-          // Keep track of custom tag and class
           receiver.customTag = customTag;
-          receiver.customClass = customClass;
+          this.customTagMap[customTag] = receiver;
 
           return this.answerSelf(argCount);
+        },
+        "primitiveWebComponentIsRegistered:": function(argCount) {
+          if(argCount !== 1) return false;
+          var tagName = this.interpreterProxy.stackValue(0).bytesAsString();
+          var customClass = window.customElements.get(tagName);
+          return this.answer(argCount, !!customClass);
         },
         "primitiveWebComponentTagName": function(argCount) {
           if(argCount !== 0) return false;
@@ -12148,6 +12128,38 @@
         },
 
         // TemplateComponent class methods
+        "primitiveTemplateComponentRegisterStyleAndTemplate": function(argCount) {
+          if(argCount !== 0) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          if(receiver.customTag === undefined) {
+            console.error("Registering a TemplateComponent without a custom tag");
+            return false;
+          }
+
+          // Create custom class and register it
+          try {
+            var customClass = class extends HTMLElement {
+              constructor() {
+                super();
+
+                // Attach shadow DOM and copy template (if available)
+                var shadowRoot = this.attachShadow({ mode: "open" });
+                if(receiver.templateElement) {
+                  shadowRoot.appendChild(receiver.templateElement.cloneNode(true));
+                }
+              }
+            };
+
+            // Keep track of custom class
+            window.customElements.define(receiver.customTag, customClass);
+            customClass.sqClass = receiver;
+          } catch(e) {
+            console.error("Failed to create new custom element with tag " + receiver.customTag, e);
+            return false;
+          }
+
+          return this.answerSelf(argCount);
+        },
         "primitiveTemplateComponentInstallStyle:andTemplate:": function(argCount) {
           if(argCount !== 2) return false;
           var styleString = this.interpreterProxy.stackValue(1).bytesAsString();
