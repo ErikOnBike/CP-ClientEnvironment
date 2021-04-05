@@ -9,6 +9,4 @@ BaselineOfCpClientEnvironment >> baseline: spec [
 	<baseline>
 	
 	"Dummy baseline so that Metacello can load external resources in the repo"
-	
-	
 ]
