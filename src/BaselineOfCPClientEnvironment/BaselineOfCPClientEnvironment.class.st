@@ -1,7 +1,7 @@
 Class {
 	#name : #BaselineOfCPClientEnvironment,
 	#superclass : #BaselineOf,
-	#category : #BaselineOfCPClientEnvironment
+	#category : #BaselineOfCpClientEnvironment
 }
 
 { #category : #baselines }
