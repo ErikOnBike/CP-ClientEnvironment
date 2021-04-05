@@ -1,11 +1,11 @@
 Class {
-	#name : #BaselineOfCPClientEnvironment,
+	#name : #BaselineOfCpClientEnvironment,
 	#superclass : #BaselineOf,
 	#category : #BaselineOfCpClientEnvironment
 }
 
 { #category : #baselines }
-BaselineOfCPClientEnvironment >> baseline: spec [
+BaselineOfCpClientEnvironment >> baseline: spec [
 	<baseline>
 	
 	"Dummy baseline so that Metacello can load external resources in the repo"
