@@ -11365,6 +11365,15 @@
           return this.answer(argCount, Math.floor(Math.random() * (upperBound - 1) + 1));
         },
 
+        // String instance methods
+        "primitiveStringAsLowercase": function(argCount) {
+          if(argCount !== 0) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var string = receiver.bytesAsString();
+          // For now only answer String (not Symbol)
+          return this.answer(argCount, this.primHandler.makeStString(string.toLowerCase()));
+        },
+
         // ClientEnvironment instance methods
         "primitiveEnvironmentVariableAt:": function(argCount) {
           if(argCount !== 1) return false;
@@ -11544,6 +11553,7 @@
         interpreterProxy: null,
         primHandler: null,
         customTagMap: {},
+        customElementClassMappers: [],
         eventClasses: [],
         eventClassStructures: {},
         eventsReceived: [],
@@ -11562,8 +11572,8 @@
           this.stringClass = this.interpreterProxy.vm.globalNamed("String");
           this.symbolClass = this.interpreterProxy.vm.globalNamed("Symbol");
           this.arrayClass = this.interpreterProxy.vm.globalNamed("Array");
-          this.domElementClass = null; // Only known after installation
           this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
+          this.domElementClass = null; // Only known after installation
           this.addEventHandlers();
           this.runUpdateProcess();
           return true;
@@ -11690,6 +11700,9 @@
           }
           return this.domElementClass;
         },
+        addElementClassMapper: function(mapper) {
+          this.customElementClassMappers.push(mapper);
+        },
         instanceForElement: function(element) {
           if(!element) return null;
 
@@ -11705,6 +11718,12 @@
             // Create new instance and store in DOM element map
             var elementClass = this.customTagMap[element.localName];
             if(!elementClass) {
+              this.customElementClassMappers.some(function(customElementClassMapper) {
+                elementClass = customElementClassMapper(element);
+                return elementClass !== null;
+              });
+            }
+            if(!elementClass) {
               var namespace = this.namespaceForURI(element.namespaceURI);
               elementClass = namespace ? namespace.elementClass : this.getDomElementClass();
             }
@@ -11713,6 +11732,15 @@
             this.domElementMap.set(element, instance);
           }
           return instance;
+        },
+        getElement: function(element) {
+          return this.domElementMap.get(element);
+        },
+        setElement: function(element, instance) {
+          this.domElementMap.set(element, instance);
+        },
+        discardElement: function(element) {
+          this.domElementMap.delete(element);
         },
 
         // DOM element class methods
@@ -12718,99 +12746,5 @@
         } else self.setTimeout(registerCpDOMPlugin, 100);
     }
     registerCpDOMPlugin();
-
-    function CpFomanticPlugin() {
-
-      return {
-        getModuleName: function() { return "CpFomanticPlugin"; },
-        interpreterProxy: null,
-        primHandler: null,
-
-        setInterpreter: function(anInterpreter) {
-          this.interpreterProxy = anInterpreter;
-          this.primHandler = this.interpreterProxy.vm.primHandler;
-          this.domPlugin = Squeak.externalModules.CpDOMPlugin;
-          // @@ToDo: Temporary hack for using the root class of DOM/HTML elements
-          this.domElementClass = this.interpreterProxy.vm.globalNamed("CpDomElement");
-          return true;
-        },
-
-        // Helper methods for answering (and setting the stack correctly)
-        answer: function(argCount, value) {
-          this.interpreterProxy.popthenPush(argCount + 1, this.primHandler.makeStObject(value));
-          return true;
-        },
-        answerSelf: function(argCount) {
-          // Leave self on stack and only pop arguments
-          this.interpreterProxy.pop(argCount);
-          return true;
-        },
-
-        // Helper methods for Fomantic
-        withJQuery: function(callback) {
-          // jQuery and Fomantic might not be loaded yet, retry until loaded
-          if(window.jQuery && window.jQuery.prototype.calendar) {
-            return callback(window.jQuery);
-          } else {
-    console.log("Waiting");
-            var thisHandle = this;
-            window.setTimeout(function() {
-              thisHandle.withJQuery(callback);
-            }, 100);
-            return null;
-          }
-        },
-        shadowElement: function(domElement) {
-          if(!domElement || !domElement.shadowRoot) return null;
-          return Array.from(domElement.shadowRoot.children)
-            .find(function(childElement) {
-              return childElement.localName !== "style";
-            })
-          ;
-        },
-
-        // FUI element instance methods
-        "primitiveFUIElementPerformOnElement:as:": function(argCount) {
-          if(argCount !== 2) return false;
-          let properties = this.domPlugin.asJavascriptObject(this.interpreterProxy.stackValue(1));
-          let elementType = this.interpreterProxy.stackValue(0).bytesAsString();
-          if(!elementType) return false;
-          let receiver = this.interpreterProxy.stackValue(argCount);
-          let shadowElement = this.shadowElement(receiver.domElement);
-    // @@ToDo: decide whether to use WebComponents or not
-          if(!shadowElement) shadowElement = receiver.domElement;
-
-          // Perform behavior
-          let result = this.withJQuery(function(jQuery) {
-            let jQueryElement = jQuery(shadowElement);
-            try {
-              return jQueryElement[elementType](properties);
-            } catch(e) {
-              throw Error("unsupported elementType " + elementType + " or error " + e.message);
-            }
-          });
-
-          // If result looks like the component itself, answer 'self'
-          if(typeof result[elementType] === "function") {
-            result = receiver;
-          }
-          return this.answer(argCount, result);
-        },
-        "primitiveFUIElementShadowElement": function(argCount) {
-          if(argCount !== 0) return false;
-          let receiver = this.interpreterProxy.stackValue(argCount);
-          let shadowElement = this.shadowElement(receiver.domElement);
-          if(!shadowElement) return false;
-          return this.answer(argCount, this.domPlugin.instanceForElement(shadowElement, this.domElementClass));
-        }
-      };
-    }
-
-    function registerCpFomanticPlugin() {
-        if(typeof Squeak === "object" && Squeak.registerExternalModule) {
-            Squeak.registerExternalModule("CpFomanticPlugin", CpFomanticPlugin());
-        } else self.setTimeout(registerCpFomanticPlugin, 100);
-    }
-    registerCpFomanticPlugin();
 
 }());
