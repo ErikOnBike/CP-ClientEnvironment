@@ -11751,13 +11751,6 @@
           var document = window.document;
           return this.answer(argCount, this.instanceForElement(document));
         },
-        "primitiveDOMElementElementWithId:": function(argCount) {
-          if(argCount !== 1) return false;
-          var id = this.interpreterProxy.stackValue(0).bytesAsString();
-          if(!id) return false;
-          var element = window.document.getElementById(id);
-          return this.answer(argCount, this.instanceForElement(element));
-        },
         "primitiveDOMElementElementsFromPoint:": function(argCount) {
           if(argCount !== 1) return false;
           var point = this.interpreterProxy.stackValue(0);
@@ -11770,6 +11763,16 @@
         },
 
         // DOM element instance methods
+        "primitiveDOMElementElementWithId:": function(argCount) {
+          if(argCount !== 1) return false;
+          var id = this.interpreterProxy.stackValue(0).bytesAsString();
+          if(!id) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          // Check the receiver is a root element (this means it has an activeElement)
+          if(!domElement || domElement.activeElement === undefined) return false;
+          var element = domElement.getElementById(id);
+          return this.answer(argCount, this.instanceForElement(element));
+        },
         "primitiveDOMElementAllDescendantsMatching:": function(argCount) {
           if(argCount !== 1) return false;
           var querySelector = this.interpreterProxy.stackValue(0).bytesAsString();
