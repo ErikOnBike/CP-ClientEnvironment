@@ -11733,18 +11733,9 @@
           }
           return instance;
         },
-        getElement: function(element) {
-          return this.domElementMap.get(element);
-        },
-        setElement: function(element, instance) {
-          this.domElementMap.set(element, instance);
-        },
-        discardElement: function(element) {
-          this.domElementMap.delete(element);
-        },
 
         // DOM element class methods
-        "primitiveDOMElementRegisterNamespace:forPrefix:": function(argCount) {
+        "primitiveDomElementRegisterNamespace:forPrefix:": function(argCount) {
           if(argCount !== 2) return false;
           var namespaceURI = this.interpreterProxy.stackValue(1).bytesAsString();
           if(!namespaceURI) return false;
@@ -11758,7 +11749,7 @@
           this.namespaces.push({ prefix: prefix, uri: namespaceURI, elementClass: receiver });
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementNewWithTag:": function(argCount) {
+        "primitiveDomElementNewWithTag:": function(argCount) {
           if(argCount !== 1) return false;
           var tagName = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!tagName) return false;
@@ -11774,12 +11765,12 @@
           ;
           return this.answer(argCount, this.instanceForElement(element));
         },
-        "primitiveDOMElementDocument": function(argCount) {
+        "primitiveDomElementDocument": function(argCount) {
           if(argCount !== 0) return false;
           var document = window.document;
           return this.answer(argCount, this.instanceForElement(document));
         },
-        "primitiveDOMElementElementsFromPoint:": function(argCount) {
+        "primitiveDomElementElementsFromPoint:": function(argCount) {
           if(argCount !== 1) return false;
           var point = this.interpreterProxy.stackValue(0);
           if(point.sqClass !== this.pointClass) return false;
@@ -11791,7 +11782,7 @@
         },
 
         // DOM element instance methods
-        "primitiveDOMElementElementWithId:": function(argCount) {
+        "primitiveDomElementElementWithId:": function(argCount) {
           if(argCount !== 1) return false;
           var id = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!id) return false;
@@ -11801,7 +11792,7 @@
           var element = domElement.getElementById(id);
           return this.answer(argCount, this.instanceForElement(element));
         },
-        "primitiveDOMElementAllDescendantsMatching:": function(argCount) {
+        "primitiveDomElementAllDescendantsMatching:": function(argCount) {
           if(argCount !== 1) return false;
           var querySelector = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!querySelector) return false;
@@ -11815,7 +11806,7 @@
           ;
           return this.answer(argCount, matchingElements);
         },
-        "primitiveDOMElementFirstDescendantMatching:": function(argCount) {
+        "primitiveDomElementFirstDescendantMatching:": function(argCount) {
           if(argCount !== 1) return false;
           var querySelector = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!querySelector) return false;
@@ -11824,14 +11815,14 @@
           var firstMatchingElement = domElement.querySelector(querySelector);
           return this.answer(argCount, this.instanceForElement(firstMatchingElement));
         },
-        "primitiveDOMElementParent": function(argCount) {
+        "primitiveDomElementParent": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           var parentElement = domElement.parentElement;
           return this.answer(argCount, this.instanceForElement(parentElement));
         },
-        "primitiveDOMElementChildren": function(argCount) {
+        "primitiveDomElementChildren": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -11843,33 +11834,33 @@
           ;
           return this.answer(argCount, childElements);
         },
-        "primitiveDOMElementPreviousSibling": function(argCount) {
+        "primitiveDomElementPreviousSibling": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           var siblingElement = domElement.previousElementSibling;
           return this.answer(argCount, this.instanceForElement(siblingElement));
         },
-        "primitiveDOMElementNextSibling": function(argCount) {
+        "primitiveDomElementNextSibling": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           var siblingElement = domElement.nextElementSibling;
           return this.answer(argCount, this.instanceForElement(siblingElement));
         },
-        "primitiveDOMElementTag": function(argCount) {
+        "primitiveDomElementTag": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           return this.answer(argCount, domElement.localName || domElement.tagName || "--shadow--");
         },
-        "primitiveDOMElementId": function(argCount) {
+        "primitiveDomElementId": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           return this.answer(argCount, domElement.id);
         },
-        "primitiveDOMElementId:": function(argCount) {
+        "primitiveDomElementId:": function(argCount) {
           if(argCount !== 1) return false;
           var id = this.interpreterProxy.stackValue(0).bytesAsString();
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
@@ -11877,13 +11868,13 @@
           domElement.id = id;
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementTextContent": function(argCount) {
+        "primitiveDomElementTextContent": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           return this.answer(argCount, domElement.textContent);
         },
-        "primitiveDOMElementTextContent:": function(argCount) {
+        "primitiveDomElementTextContent:": function(argCount) {
           if(argCount !== 1) return false;
           var textContent = this.interpreterProxy.stackValue(0).bytesAsString();
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
@@ -11891,13 +11882,13 @@
           domElement.textContent = textContent;
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementMarkupContent": function(argCount) {
+        "primitiveDomElementMarkupContent": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           return this.answer(argCount, domElement.innerHTML);
         },
-        "primitiveDOMElementMarkupContent:": function(argCount) {
+        "primitiveDomElementMarkupContent:": function(argCount) {
           if(argCount !== 1) return false;
           var content = this.interpreterProxy.stackValue(0);
           if(!content.bytesAsString) return false;
@@ -11907,7 +11898,7 @@
           domElement.innerHTML = markupContent;
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementIsClassed:": function(argCount) {
+        "primitiveDomElementIsClassed:": function(argCount) {
           if(argCount !== 1) return false;
           var className = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!className) return false;
@@ -11915,7 +11906,7 @@
           if(!domElement) return false;
           return this.answer(argCount, domElement.classList.contains(className));
         },
-        "primitiveDOMElementAddClass:": function(argCount) {
+        "primitiveDomElementAddClass:": function(argCount) {
           if(argCount !== 1) return false;
           var className = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!className) return false;
@@ -11924,7 +11915,7 @@
           domElement.classList.add(className);
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementRemoveClass:": function(argCount) {
+        "primitiveDomElementRemoveClass:": function(argCount) {
           if(argCount !== 1) return false;
           var className = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!className) return false;
@@ -11933,7 +11924,7 @@
           domElement.classList.remove(className);
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementAttributeAt:": function(argCount) {
+        "primitiveDomElementAttributeAt:": function(argCount) {
           if(argCount !== 1) return false;
           var attributeName = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!attributeName) return false;
@@ -11948,7 +11939,7 @@
           }
           return this.answer(argCount, attributeValue);
         },
-        "primitiveDOMElementAttributeAt:put:": function(argCount) {
+        "primitiveDomElementAttributeAt:put:": function(argCount) {
           if(argCount !== 2) return false;
           var attributeName = this.interpreterProxy.stackValue(1).bytesAsString();
           if(!attributeName) return false;
@@ -11973,7 +11964,7 @@
           }
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementRemoveAttributeAt:": function(argCount) {
+        "primitiveDomElementRemoveAttributeAt:": function(argCount) {
           if(argCount !== 1) return false;
           var attributeName = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!attributeName) return false;
@@ -11987,7 +11978,7 @@
           }
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementStyleAt:": function(argCount) {
+        "primitiveDomElementStyleAt:": function(argCount) {
           if(argCount !== 1) return false;
           var styleName = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!styleName) return false;
@@ -11996,7 +11987,7 @@
           return this.answer(argCount, domElement.style.getPropertyValue(styleName) ||
               window.getComputedStyle(domElement).getPropertyValue(styleName));
         },
-        "primitiveDOMElementStyleAt:put:": function(argCount) {
+        "primitiveDomElementStyleAt:put:": function(argCount) {
           if(argCount !== 2) return false;
           var styleName = this.interpreterProxy.stackValue(1).bytesAsString();
           if(!styleName) return false;
@@ -12012,7 +12003,7 @@
           }
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementRemoveStyleAt:": function(argCount) {
+        "primitiveDomElementRemoveStyleAt:": function(argCount) {
           if(argCount !== 1) return false;
           var styleName = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!styleName) return false;
@@ -12021,7 +12012,7 @@
           domElement.style.removeProperty(styleName);
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementPropertyAt:": function(argCount) {
+        "primitiveDomElementPropertyAt:": function(argCount) {
           if(argCount !== 1) return false;
           var propertyName = this.interpreterProxy.stackValue(0).bytesAsString();
           if(!propertyName) return false;
@@ -12029,7 +12020,7 @@
           if(!domElement) return false;
           return this.answer(argCount, domElement[propertyName]);
         },
-        "primitiveDOMElementPropertyAt:put:": function(argCount) {
+        "primitiveDomElementPropertyAt:put:": function(argCount) {
           if(argCount !== 2) return false;
           var propertyName = this.interpreterProxy.stackValue(1).bytesAsString();
           if(!propertyName) return false;
@@ -12039,13 +12030,13 @@
           domElement[propertyName] = propertyValue;
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementClone": function(argCount) {
+        "primitiveDomElementClone": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           return this.answer(argCount, this.instanceForElement(domElement.cloneNode(true)));
         },
-        "primitiveDOMElementAppendChild:": function(argCount) {
+        "primitiveDomElementAppendChild:": function(argCount) {
           if(argCount !== 1) return false;
           var childInstance = this.interpreterProxy.stackValue(0);
           var childElement = childInstance.domElement;
@@ -12060,7 +12051,7 @@
           domElement.appendChild(childElement);
           return this.answer(argCount, childInstance);
         },
-        "primitiveDOMElementInsertChild:before:": function(argCount) {
+        "primitiveDomElementInsertChild:before:": function(argCount) {
           if(argCount !== 2) return false;
           var childInstance = this.interpreterProxy.stackValue(1);
           var childElement = childInstance.domElement;
@@ -12072,7 +12063,7 @@
           domElement.insertBefore(childElement, siblingElement);
           return this.answer(argCount, childInstance);
         },
-        "primitiveDOMElementReplaceChild:with:": function(argCount) {
+        "primitiveDomElementReplaceChild:with:": function(argCount) {
           if(argCount !== 2) return false;
           var childElement = this.interpreterProxy.stackValue(1).domElement;
           if(!childElement) return false;
@@ -12084,7 +12075,7 @@
           domElement.replaceChild(replacementElement, childElement);
           return this.answer(argCount, replacementInstance);
         },
-        "primitiveDOMElementRemoveChild:": function(argCount) {
+        "primitiveDomElementRemoveChild:": function(argCount) {
           if(argCount !== 1) return false;
           var childInstance = this.interpreterProxy.stackValue(0);
           var childElement = childInstance.domElement;
@@ -12095,14 +12086,14 @@
           domElement.removeChild(childElement);
           return this.answer(argCount, childInstance);
         },
-        "primitiveDOMElementFocus": function(argCount) {
+        "primitiveDomElementFocus": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           domElement.focus();
           return this.answerSelf(argCount);
         },
-        "primitiveDOMElementUnRegisterAllInterest": function(argCount) {
+        "primitiveDomElementUnRegisterAllInterest": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -12112,12 +12103,12 @@
         },
 
         // HTMLElement class methods
-        "primitiveHTMLElementDocumentHead": function(argCount) {
+        "primitiveHtmlElementDocumentHead": function(argCount) {
           if(argCount !== 0) return false;
           var documentHead = window.document.head;
           return this.answer(argCount, this.instanceForElement(documentHead));
         },
-        "primitiveHTMLElementDocumentBody": function(argCount) {
+        "primitiveHtmlElementDocumentBody": function(argCount) {
           if(argCount !== 0) return false;
           var documentBody = window.document.body;
           return this.answer(argCount, this.instanceForElement(documentBody));
