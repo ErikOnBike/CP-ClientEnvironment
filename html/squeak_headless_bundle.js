@@ -11553,6 +11553,7 @@
         interpreterProxy: null,
         primHandler: null,
         customTagMap: {},
+        nestedTags: {},
         customElementClassMappers: [],
         eventClasses: [],
         eventClassStructures: {},
@@ -12149,6 +12150,18 @@
           return this.answer(argCount, this.instanceForElement(domElement.shadowRoot));
         },
 
+        // TemplateComponent helper methods
+        ensureShadowRoot: function(elementClass, domElement) {
+
+          // Attach shadow DOM (if not already presnet) and copy template (if available)
+          if(!domElement.shadowRoot) {
+            var shadowRoot = domElement.attachShadow({ mode: "open" });
+            if(elementClass.templateElement) {
+              shadowRoot.appendChild(elementClass.templateElement.cloneNode(true));
+            }
+          }
+        },
+
         // TemplateComponent class methods
         "primitiveTemplateComponentRegisterStyleAndTemplate": function(argCount) {
           if(argCount !== 0) return false;
@@ -12159,16 +12172,12 @@
           }
 
           // Create custom class and register it
+          var thisHandle = this;
           try {
             var customClass = class extends HTMLElement {
               constructor() {
                 super();
-
-                // Attach shadow DOM and copy template (if available)
-                var shadowRoot = this.attachShadow({ mode: "open" });
-                if(receiver.templateElement) {
-                  shadowRoot.appendChild(receiver.templateElement.cloneNode(true));
-                }
+                thisHandle.ensureShadowRoot(receiver, this);
               }
             };
 
@@ -12243,10 +12252,23 @@
           // Create template node from specified template (String)
           // The DOM parser is very forgiving, so no need for try/catch here
           var domParser = new DOMParser();
-          var templateElement = domParser.parseFromString("<template>" + (template || "") + "</template>", "text/html").querySelector("template");
+          var templateElement = domParser.parseFromString("<template>" + (template || "") + "</template>", "text/html").querySelector("template").content;
+
+          // Check for nested templates
+          var customTags = Object.keys(this.customTagMap);
+          var hasNestedTag = customTags.some(function(customTag) {
+            return templateElement.querySelector(customTag) !== null;
+          });
+
+          // Add or remove receiver from collection of nested tags
+          if(hasNestedTag) {
+            this.nestedTags[webComponentClass.customTag] = true;
+          } else {
+            delete this.nestedTags[webComponentClass.customTag];
+          }
 
           // Store the template node and update style (which is element within templateElement)
-          webComponentClass.templateElement = templateElement.content;
+          webComponentClass.templateElement = templateElement;
           this.installStyleInTemplate(webComponentClass);
         },
         "primitiveTemplateComponentRenderAllInstances": function(argCount) {
@@ -12256,26 +12278,47 @@
           this.renderAllInstances(receiver);
           return this.answerSelf(argCount);
         },
-        renderAllInstances: function(webComponentClass) {
+        renderAllInstances: function(webComponentClass, root) {
+          if(!root) {
+            root = window.document;
+          }
 
-          // Render all instances
+          // Render all direct instances
           var templateElement = webComponentClass.templateElement;
           var thisHandle = this;
-          window.document.querySelectorAll(webComponentClass.customTag).forEach(function(instance) {
-     
+          root.querySelectorAll(webComponentClass.customTag).forEach(function(instance) {
             thisHandle.renderTemplateOnElement(templateElement, instance);
+          });
+
+          // Render all nested instances
+          Object.keys(this.nestedTags).forEach(function(nestedTag) {
+            root.querySelectorAll(nestedTag).forEach(function(instance) {
+              if(instance.shadowRoot) {
+                thisHandle.renderAllInstances(webComponentClass, instance.shadowRoot);
+              }
+            });
           });
         },
         renderTemplateOnElement: function(templateElement, element) {
 
-            // Remove existing content
-            var shadowRoot = element.shadowRoot;
-            while(shadowRoot.firstChild) {
-              shadowRoot.firstChild.remove();
-            }
+          // Remove existing content
+          var shadowRoot = element.shadowRoot;
+          while(shadowRoot.firstChild) {
+            shadowRoot.firstChild.remove();
+          }
 
-            // Set new content using a copy of the template to prevent changes (by others) to persist
-            shadowRoot.appendChild(templateElement.cloneNode(true));
+          // Set new content using a copy of the template to prevent changes (by others) to persist
+          shadowRoot.appendChild(templateElement.cloneNode(true));
+        },
+
+        // TemplateComponent instance methods
+        "primitiveTemplateComponentEnsureShadowRoot": function(argCount) {
+          if(argCount !== 0) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var domElement = receiver.domElement;
+          if(!domElement) return false;
+          this.ensureShadowRoot(receiver.sqClass, domElement);
+          return this.answerSelf(argCount);
         },
 
         // Update process
