@@ -11287,7 +11287,19 @@
           this.interpreterProxy = anInterpreter;
           this.primHandler = this.interpreterProxy.vm.primHandler;
           this.symbolClass = this.interpreterProxy.vm.globalNamed("Symbol");
-          this.characterClass = this.interpreterProxy.vm.globalNamed("Character");
+          this.stringClass = this.interpreterProxy.vm.globalNamed("String");
+          this.byteStringClass = this.interpreterProxy.vm.globalNamed("ByteString");
+          this.wideStringClass = this.interpreterProxy.vm.globalNamed("WideString");
+
+          // Add #asString behavior to String classes (converting from Smalltalk to Javascript Strings)
+          this.stringClass.classInstProto().prototype.asString = function() {
+            var charChunks = [];
+            var src = this.bytes || this.words || [];
+            for(var i = 0; i < src.length;) {
+              charChunks.push(String.fromCodePoint.apply(null, src.subarray(i, i += 16348)));
+            }
+            return charChunks.join('');
+          };
 
           return true;
         },
@@ -11316,7 +11328,7 @@
         "primitiveSymbolRegister:": function(argCount) {
           if(argCount !== 1) return false;
           var symbol = this.interpreterProxy.stackValue(0);
-          var symbolString = symbol.bytesAsString();
+          var symbolString = symbol.asString();
           if(!this.symbolClass.symbolTable) {
             this.symbolClass.symbolTable = {};
           }
@@ -11326,7 +11338,7 @@
         },
         "primitiveSymbolFromString:": function(argCount) {
           if(argCount !== 1) return false;
-          var string = this.interpreterProxy.stackValue(0).bytesAsString();
+          var string = this.interpreterProxy.stackValue(0).asString();
           if(!this.symbolClass.symbolTable) {
             this.symbolClass.symbolTable = {};
           }
@@ -11341,20 +11353,7 @@
         "primitiveByteArrayAsString": function(argCount) {
           if(argCount !== 0) return false;
           var receiver = this.interpreterProxy.stackValue(argCount);
-          return this.answer(argCount, this.primHandler.makeStString(receiver.bytesAsString()));
-        },
-
-        // WordArray instance methods
-        "primitiveWordArrayAsString": function(argCount) {
-          if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          var words = receiver.words || [];
-          var chars = [];
-          var i = 0;
-          while(i < words.length) {
-            chars.push(String.fromCodePoint.apply(null, words.subarray(i, i += 16384)));
-          }
-          return this.answer(argCount, this.primHandler.makeStString(chars.join("")));
+          return this.answer(argCount, this.primHandler.makeStString(receiver.asString()));
         },
 
         // Integer instance methods
@@ -11365,48 +11364,174 @@
           return this.answer(argCount, Math.floor(Math.random() * (upperBound - 1) + 1));
         },
 
+        // String class methods
+        "primitiveStringFromWordArray:": function(argCount) {
+          if(argCount !== 1) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var wordArray = this.interpreterProxy.stackValue(0);
+          var src = wordArray.words || [];
+          var newString = this.interpreterProxy.vm.instantiateClass(receiver, src.length);
+          var dst = newString.bytes || newString.words;
+          for(var i = 0; i < src.length; i++) {
+            dst[i] = src[i];
+          }
+          return this.answer(argCount, newString);
+        },
+
         // String instance methods
+        skipDelimiters: function(src, delimiters, from) {
+          for(;from < src.length; from++) {
+            if(delimiters.indexOf(src[from]) < 0) {
+              return from;
+            }
+          }
+          return src.length + 1;
+        },
+        findDelimiters: function(src, delimiters, from) {
+          for(;from < src.length; from++) {
+            if(delimiters.indexOf(src[from]) >= 0) {
+              return from;
+            }
+          }
+          return src.length + 1;
+        },
+        createSubstring: function(src, start, end) {
+          var substring = src.slice(start, end);
+          var isWideString = substring.some(function(charValue) { return charValue >= 256; });
+          var newString = this.interpreterProxy.vm.instantiateClass(isWideString ? this.wideStringClass : this.byteStringClass, substring.length);
+          var dst = newString.bytes || newString.words || [];
+          for(var i = 0; i < substring.length; i++) {
+            dst[i] = substring[i];
+          }
+          return newString;
+        },
+        "primitiveStringAsciiCompare:": function(argCount) {
+          if(argCount !== 1) return false;
+          var otherString = this.interpreterProxy.stackValue(0);
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var src = receiver.bytes || receiver.words || [];
+          var dst = otherString.bytes || otherString.words || [];
+          var minLength = Math.min(src.length, dst.length);
+          for(var i = 0; i < minLength; i++) {
+            var cmp = src[i] - dst[i];
+            if(cmp > 0) {
+              return this.answer(argCount, 3);	// src comes after dst
+            } else if(cmp < 0) {
+              return this.answer(argCount, 1);	// src comes before dst
+            }
+          }
+          if(src.length > minLength) {
+            return this.answer(argCount, 3);	// src comes after dst (src is longer)
+          } else if(dst.length > minLength) {
+            return this.answer(argCount, 1);	// src comes before dst (src is shorter)
+          }
+          return this.answer(argCount, 2);		// src equals dst
+        },
+        "primitiveStringAsUppercase": function(argCount) {
+          if(argCount !== 0) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var src = receiver.bytes || receiver.words || [];
+          var uppercaseString = this.interpreterProxy.vm.instantiateClass(receiver.sqClass, src.length);
+          var dst = receiver.bytes ? uppercaseString.bytes : uppercaseString.words;
+          for(var i = 0; i < src.length; i++) {
+            dst[i] = String.fromCodePoint(src[i]).toUpperCase().codePointAt(0);
+          }
+          return this.answer(argCount, uppercaseString);
+        },
         "primitiveStringAsLowercase": function(argCount) {
           if(argCount !== 0) return false;
           var receiver = this.interpreterProxy.stackValue(argCount);
-          var string = receiver.bytesAsString();
-          // For now only answer String (not Symbol)
-          return this.answer(argCount, this.primHandler.makeStString(string.toLowerCase()));
+          var src = receiver.bytes || receiver.words || [];
+          var lowercaseString = this.interpreterProxy.vm.instantiateClass(receiver.sqClass, src.length);
+          var dst = receiver.bytes ? lowercaseString.bytes : lowercaseString.words;
+          for(var i = 0; i < src.length; i++) {
+            dst[i] = String.fromCodePoint(src[i]).toLowerCase().codePointAt(0);
+          }
+          return this.answer(argCount, lowercaseString);
+        },
+        "primitiveStringFindTokens:": function(argCount) {
+          if(argCount !== 1) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var src = receiver.bytes || receiver.words || [];
+          var delimitersString = this.interpreterProxy.stackValue(0);
+          var delimiters = delimitersString.bytes || delimitersString.words || [];
+          var result = [];
+          var keyStop = 0;
+          while(keyStop < src.length) {
+            var keyStart = this.skipDelimiters(src, delimiters, keyStop);
+            keyStop = this.findDelimiters(src, delimiters, keyStart);
+            if(keyStart < keyStop) {
+              result.push(this.createSubstring(src, keyStart, keyStop));
+            }
+          }
+          return this.answer(argCount, result);
+        },
+        "primitiveStringIncludesSubstring:": function(argCount) {
+          if(argCount !== 1) return false;
+          var src = this.interpreterProxy.stackValue(argCount).asString();
+          var substring = this.interpreterProxy.stackValue(0).asString();
+          return this.answer(argCount, src.indexOf(substring) >= 0);
+        },
+        "primitiveStringHash": function(argCount) {
+          if(argCount !== 0) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var src = receiver.bytes || receiver.words || [];
+          var hash = 0x3400; // Initial value ByteString hash
+          for(var i = 0; i < src.length; i++) {
+            hash = hash + src[i];
+            var low = hash & 0x3fff;
+            hash = (0x260d * low + ((0x260d * Math.floor(hash / 0x4000) + (0x0065 * low) & 0x3fff) * 0x4000)) & 0xfffffff;
+          }
+          return this.answer(argCount, hash);
+        },
+
+        // WideString class methods
+        "primitiveWideStringFrom:": function(argCount) {
+          if(argCount !== 1) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var srcString = this.interpreterProxy.stackValue(0);
+          var src = srcString.bytes || srcString.words || [];
+          var newString = this.interpreterProxy.vm.instantiateClass(receiver, src.length);
+          var dst = newString.words;
+          for(var i = 0; i < src.length; i++) {
+            dst[i] = src[i];
+          }
+          return this.answer(argCount, newString);
         },
 
         // ClientEnvironment instance methods
         "primitiveEnvironmentVariableAt:": function(argCount) {
           if(argCount !== 1) return false;
-          var variableName = this.interpreterProxy.stackValue(0).bytesAsString();
+          var variableName = this.interpreterProxy.stackValue(0).asString();
           if(!variableName) return false;
           var variableValue = window.sessionStorage.getItem(variableName);
           return this.answer(argCount, variableValue);
         },
         "primitiveEnvironmentVariableAt:put:": function(argCount) {
           if(argCount !== 2) return false;
-          var variableName = this.interpreterProxy.stackValue(1).bytesAsString();
+          var variableName = this.interpreterProxy.stackValue(1).asString();
           if(!variableName) return false;
-          var variableValue = this.interpreterProxy.stackValue(0).bytesAsString();
+          var variableValue = this.interpreterProxy.stackValue(0).asString();
           if(!variableValue) return false;
           window.sessionStorage.setItem(variableName, variableValue);
           return this.answerSelf(argCount);
         },
         "primitiveEnvironmentRemoveVariableAt:": function(argCount) {
           if(argCount !== 1) return false;
-          var variableName = this.interpreterProxy.stackValue(0).bytesAsString();
+          var variableName = this.interpreterProxy.stackValue(0).asString();
           if(!variableName) return false;
           window.sessionStorage.removeItem(variableName);
           return this.answerSelf(argCount);
         },
         "primitiveEnvironmentAlert:": function(argCount) {
           if(argCount !== 1) return false;
-          var message = this.interpreterProxy.stackValue(0).bytesAsString();
+          var message = this.interpreterProxy.stackValue(0).asString();
           window.alert(message);
           return this.answerSelf(argCount);
         },
         "primitiveEnvironmentConfirm:": function(argCount) {
           if(argCount !== 1) return false;
-          var message = this.interpreterProxy.stackValue(0).bytesAsString();
+          var message = this.interpreterProxy.stackValue(0).asString();
           return this.answer(argCount, window.confirm(message) === true);
         },
         "primitiveEnvironmentReload": function(argCount) {
@@ -11419,7 +11544,7 @@
         "primitiveWebSocketConnectTo:withEventSemaphore:": function(argCount) {
           if(argCount !== 2) return false;
           var receiver = this.interpreterProxy.stackValue(argCount);
-          var url = this.interpreterProxy.stackValue(1).bytesAsString();
+          var url = this.interpreterProxy.stackValue(1).asString();
           var semaIndex = this.interpreterProxy.stackIntegerValue(0);
 
           // Setup WebSocket
@@ -11532,7 +11657,7 @@
         // System logging
         "primitiveEnvironmentLog:": function(argCount) {
           if(argCount !== 1) return false;
-          var message = this.interpreterProxy.stackValue(0).bytesAsString();
+          var message = this.interpreterProxy.stackValue(0).asString();
           console.log(Date.now() + " " + message);
           return this.answerSelf(argCount);
         }
@@ -11570,8 +11695,6 @@
           this.interpreterProxy = anInterpreter;
           this.primHandler = this.interpreterProxy.vm.primHandler;
           this.pointClass = this.interpreterProxy.vm.globalNamed("Point");
-          this.stringClass = this.interpreterProxy.vm.globalNamed("String");
-          this.symbolClass = this.interpreterProxy.vm.globalNamed("Symbol");
           this.arrayClass = this.interpreterProxy.vm.globalNamed("Array");
           this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
           this.domElementClass = null; // Only known after installation
@@ -11658,12 +11781,11 @@
             return obj;
           } else if(obj.isFloat) {
             return obj.float;
-          } else if(obj.bytesAsString) {
-            return obj.bytesAsString();
           } else if(obj.sqClass === this.dictionaryClass) {
             return this.dictionaryAsJavascriptObject(obj);
           }
-          throw Error("cannot convert to Javascript object");
+          // Assume a String is used otherwise
+          return obj.asString();
         },
         dictionaryAsJavascriptObject: function(obj) {
           var thisHandle = this;
@@ -11674,7 +11796,7 @@
           var result = {};
           associations.pointers.forEach(function(assoc) {
             if(!assoc.isNil) {
-              result[assoc.pointers[0].bytesAsString()] = thisHandle.asJavascriptObject(assoc.pointers[1]);
+              result[this.asJavascriptObject(assoc.pointers[0])] = thisHandle.asJavascriptObject(assoc.pointers[1]);
             }
           });
           return result;
@@ -11738,9 +11860,9 @@
         // DOM element class methods
         "primitiveDomElementRegisterNamespace:forPrefix:": function(argCount) {
           if(argCount !== 2) return false;
-          var namespaceURI = this.interpreterProxy.stackValue(1).bytesAsString();
+          var namespaceURI = this.interpreterProxy.stackValue(1).asString();
           if(!namespaceURI) return false;
-          var prefix = this.interpreterProxy.stackValue(0).bytesAsString();
+          var prefix = this.interpreterProxy.stackValue(0).asString();
           if(!prefix) return false;
           if(this.namespaceForPrefix(prefix)) {
             console.error("The prefix " + prefix + " is already installed in the browser");
@@ -11752,7 +11874,7 @@
         },
         "primitiveDomElementNewWithTag:": function(argCount) {
           if(argCount !== 1) return false;
-          var tagName = this.interpreterProxy.stackValue(0).bytesAsString();
+          var tagName = this.interpreterProxy.stackValue(0).asString();
           if(!tagName) return false;
           var separatorIndex = tagName.indexOf(":");
           var prefix = separatorIndex >= 0 ? tagName.slice(0, separatorIndex) : tagName;
@@ -11785,7 +11907,7 @@
         // DOM element instance methods
         "primitiveDomElementElementWithId:": function(argCount) {
           if(argCount !== 1) return false;
-          var id = this.interpreterProxy.stackValue(0).bytesAsString();
+          var id = this.interpreterProxy.stackValue(0).asString();
           if(!id) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           // Check the receiver is a root element (this means it has an activeElement)
@@ -11795,7 +11917,7 @@
         },
         "primitiveDomElementAllDescendantsMatching:": function(argCount) {
           if(argCount !== 1) return false;
-          var querySelector = this.interpreterProxy.stackValue(0).bytesAsString();
+          var querySelector = this.interpreterProxy.stackValue(0).asString();
           if(!querySelector) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -11809,7 +11931,7 @@
         },
         "primitiveDomElementFirstDescendantMatching:": function(argCount) {
           if(argCount !== 1) return false;
-          var querySelector = this.interpreterProxy.stackValue(0).bytesAsString();
+          var querySelector = this.interpreterProxy.stackValue(0).asString();
           if(!querySelector) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -11863,7 +11985,7 @@
         },
         "primitiveDomElementId:": function(argCount) {
           if(argCount !== 1) return false;
-          var id = this.interpreterProxy.stackValue(0).bytesAsString();
+          var id = this.interpreterProxy.stackValue(0).asString();
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           domElement.id = id;
@@ -11877,7 +11999,7 @@
         },
         "primitiveDomElementTextContent:": function(argCount) {
           if(argCount !== 1) return false;
-          var textContent = this.interpreterProxy.stackValue(0).bytesAsString();
+          var textContent = this.interpreterProxy.stackValue(0).asString();
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           domElement.textContent = textContent;
@@ -11892,8 +12014,7 @@
         "primitiveDomElementMarkupContent:": function(argCount) {
           if(argCount !== 1) return false;
           var content = this.interpreterProxy.stackValue(0);
-          if(!content.bytesAsString) return false;
-          var markupContent = content.bytesAsString();
+          var markupContent = content.asString();
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           domElement.innerHTML = markupContent;
@@ -11901,7 +12022,7 @@
         },
         "primitiveDomElementIsClassed:": function(argCount) {
           if(argCount !== 1) return false;
-          var className = this.interpreterProxy.stackValue(0).bytesAsString();
+          var className = this.interpreterProxy.stackValue(0).asString();
           if(!className) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -11909,7 +12030,7 @@
         },
         "primitiveDomElementAddClass:": function(argCount) {
           if(argCount !== 1) return false;
-          var className = this.interpreterProxy.stackValue(0).bytesAsString();
+          var className = this.interpreterProxy.stackValue(0).asString();
           if(!className) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -11918,7 +12039,7 @@
         },
         "primitiveDomElementRemoveClass:": function(argCount) {
           if(argCount !== 1) return false;
-          var className = this.interpreterProxy.stackValue(0).bytesAsString();
+          var className = this.interpreterProxy.stackValue(0).asString();
           if(!className) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -11927,7 +12048,7 @@
         },
         "primitiveDomElementAttributeAt:": function(argCount) {
           if(argCount !== 1) return false;
-          var attributeName = this.interpreterProxy.stackValue(0).bytesAsString();
+          var attributeName = this.interpreterProxy.stackValue(0).asString();
           if(!attributeName) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -11942,11 +12063,10 @@
         },
         "primitiveDomElementAttributeAt:put:": function(argCount) {
           if(argCount !== 2) return false;
-          var attributeName = this.interpreterProxy.stackValue(1).bytesAsString();
+          var attributeName = this.interpreterProxy.stackValue(1).asString();
           if(!attributeName) return false;
           var value = this.interpreterProxy.stackValue(0);
-          if(!value.isNil && !(value.sqClass === this.stringClass || value.sqClass === this.symbolClass)) return false;
-          var attributeValue = value.isNil ? null: value.bytesAsString();
+          var attributeValue = value.isNil ? null: value.asString();
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           var namespaceURI = this.namespaceURIFromName(attributeName);
@@ -11967,7 +12087,7 @@
         },
         "primitiveDomElementRemoveAttributeAt:": function(argCount) {
           if(argCount !== 1) return false;
-          var attributeName = this.interpreterProxy.stackValue(0).bytesAsString();
+          var attributeName = this.interpreterProxy.stackValue(0).asString();
           if(!attributeName) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -11981,7 +12101,7 @@
         },
         "primitiveDomElementStyleAt:": function(argCount) {
           if(argCount !== 1) return false;
-          var styleName = this.interpreterProxy.stackValue(0).bytesAsString();
+          var styleName = this.interpreterProxy.stackValue(0).asString();
           if(!styleName) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -11990,11 +12110,10 @@
         },
         "primitiveDomElementStyleAt:put:": function(argCount) {
           if(argCount !== 2) return false;
-          var styleName = this.interpreterProxy.stackValue(1).bytesAsString();
+          var styleName = this.interpreterProxy.stackValue(1).asString();
           if(!styleName) return false;
           var value = this.interpreterProxy.stackValue(0);
-          if(!value.isNil && !value.bytesAsString) return false;
-          var styleValue = value.isNil ? null : value.bytesAsString();
+          var styleValue = value.isNil ? null : value.asString();
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           if(styleValue === null) {
@@ -12006,7 +12125,7 @@
         },
         "primitiveDomElementRemoveStyleAt:": function(argCount) {
           if(argCount !== 1) return false;
-          var styleName = this.interpreterProxy.stackValue(0).bytesAsString();
+          var styleName = this.interpreterProxy.stackValue(0).asString();
           if(!styleName) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -12015,7 +12134,7 @@
         },
         "primitiveDomElementPropertyAt:": function(argCount) {
           if(argCount !== 1) return false;
-          var propertyName = this.interpreterProxy.stackValue(0).bytesAsString();
+          var propertyName = this.interpreterProxy.stackValue(0).asString();
           if(!propertyName) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
@@ -12023,7 +12142,7 @@
         },
         "primitiveDomElementPropertyAt:put:": function(argCount) {
           if(argCount !== 2) return false;
-          var propertyName = this.interpreterProxy.stackValue(1).bytesAsString();
+          var propertyName = this.interpreterProxy.stackValue(1).asString();
           if(!propertyName) return false;
           var propertyValue = this.asJavascriptObject(this.interpreterProxy.stackValue(0));
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
@@ -12133,7 +12252,7 @@
         },
         "primitiveWebComponentIsRegistered:": function(argCount) {
           if(argCount !== 1) return false;
-          var tagName = this.interpreterProxy.stackValue(0).bytesAsString();
+          var tagName = this.interpreterProxy.stackValue(0).asString();
           var customClass = window.customElements.get(tagName);
           return this.answer(argCount, !!customClass);
         },
@@ -12193,8 +12312,8 @@
         },
         "primitiveTemplateComponentInstallStyle:andTemplate:": function(argCount) {
           if(argCount !== 2) return false;
-          var styleString = this.interpreterProxy.stackValue(1).bytesAsString();
-          var templateString = this.interpreterProxy.stackValue(0).bytesAsString();
+          var styleString = this.interpreterProxy.stackValue(1).asString();
+          var templateString = this.interpreterProxy.stackValue(0).asString();
           var receiver = this.interpreterProxy.stackValue(argCount);
 
           // Set the style without installing it (this will happen when installing the template)
@@ -12207,7 +12326,7 @@
         },
         "primitiveTemplateComponentInstallStyle:": function(argCount) {
           if(argCount !== 1) return false;
-          var styleString = this.interpreterProxy.stackValue(0).bytesAsString();
+          var styleString = this.interpreterProxy.stackValue(0).asString();
           var receiver = this.interpreterProxy.stackValue(argCount);
           receiver.style = styleString;
           this.installStyleInTemplate(receiver);
@@ -12241,7 +12360,7 @@
         },
         "primitiveTemplateComponentInstallTemplate:": function(argCount) {
           if(argCount !== 1) return false;
-          var templateString = this.interpreterProxy.stackValue(0).bytesAsString();
+          var templateString = this.interpreterProxy.stackValue(0).asString();
           var receiver = this.interpreterProxy.stackValue(argCount);
           this.installTemplate(receiver, templateString);
           this.renderAllInstances(receiver);
