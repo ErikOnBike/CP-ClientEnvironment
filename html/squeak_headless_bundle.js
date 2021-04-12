@@ -11417,7 +11417,13 @@
         },
         createSubstring: function(src, start, end) {
           var substring = src.slice(start, end);
-          return this.primHandler.makeStString(substring);
+          var isWideString = substring.some(function(charValue) { return charValue >= 256; });
+          var newString = this.interpreterProxy.vm.instantiateClass(isWideString ? this.wideStringClass : this.byteStringClass, substring.length);
+          var dst = newString.bytes || newString.words || [];
+          for(var i = 0; i < substring.length; i++) {
+            dst[i] = substring[i];
+          }
+          return newString;
         },
         "primitiveStringConcatenate:": function(argCount) {
           if(argCount !== 1) return false;
