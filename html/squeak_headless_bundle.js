@@ -11419,6 +11419,23 @@
           var substring = src.slice(start, end);
           return this.primHandler.makeStString(substring);
         },
+        "primitiveStringConcatenate:": function(argCount) {
+          if(argCount !== 1) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var otherString = this.interpreterProxy.stackValue(0);
+          var first = receiver.bytes || receiver.words || [];
+          var second = otherString.bytes || otherString.words || [];
+          var isWideString = receiver.words || otherString.words || false;
+          var newString = this.interpreterProxy.vm.instantiateClass(isWideString ? this.wideStringClass : this.byteStringClass, first.length + second.length);
+          var dst = newString.bytes || newString.words;
+          for(var i = 0; i < first.length; i++) {
+            dst[i] = first[i];
+          }
+          for(var i = 0; i < second.length; i++) {
+            dst[i + first.length] = second[i];
+          }
+          return this.answer(argCount, newString);
+        },
         "primitiveStringAsciiCompare:": function(argCount) {
           if(argCount !== 1) return false;
           var otherString = this.interpreterProxy.stackValue(0);
