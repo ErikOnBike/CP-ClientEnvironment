@@ -11301,6 +11301,26 @@
             return charChunks.join('');
           };
 
+          // Replace makeStString behavior to support WideStrings
+          var thisHandle = this;
+          Squeak.Primitives.prototype.makeStString = function(string) {
+            var isWideString = false;
+            // Will make surrogates pairs into single elements (which then get converted into codepoints)
+            var src = Array.from(string).map(function(char) {
+              var charValue = char.codePointAt(0);
+              if(charValue >= 256) {
+                isWideString = true;
+              }
+              return charValue;
+            });
+            var newString = thisHandle.interpreterProxy.vm.instantiateClass(isWideString ? thisHandle.wideStringClass : thisHandle.byteStringClass, src.length);
+            var dst = newString.bytes || newString.words || [];
+            for(var i = 0; i < src.length; i++) {
+              dst[i] = src[i];
+            }
+            return newString;
+          };
+
           return true;
         },
 
@@ -11353,7 +11373,7 @@
         "primitiveByteArrayAsString": function(argCount) {
           if(argCount !== 0) return false;
           var receiver = this.interpreterProxy.stackValue(argCount);
-          return this.answer(argCount, this.primHandler.makeStString(receiver.asString()));
+          return this.answer(argCount, receiver.asString());
         },
 
         // Integer instance methods
@@ -11397,13 +11417,7 @@
         },
         createSubstring: function(src, start, end) {
           var substring = src.slice(start, end);
-          var isWideString = substring.some(function(charValue) { return charValue >= 256; });
-          var newString = this.interpreterProxy.vm.instantiateClass(isWideString ? this.wideStringClass : this.byteStringClass, substring.length);
-          var dst = newString.bytes || newString.words || [];
-          for(var i = 0; i < substring.length; i++) {
-            dst[i] = substring[i];
-          }
-          return newString;
+          return this.primHandler.makeStString(substring);
         },
         "primitiveStringAsciiCompare:": function(argCount) {
           if(argCount !== 1) return false;
