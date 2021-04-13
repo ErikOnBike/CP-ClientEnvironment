@@ -11434,11 +11434,12 @@
           var isWideString = receiver.words || otherString.words || false;
           var newString = this.interpreterProxy.vm.instantiateClass(isWideString ? this.wideStringClass : this.byteStringClass, first.length + second.length);
           var dst = newString.bytes || newString.words;
-          for(var i = 0; i < first.length; i++) {
+          var i = 0;
+          for(; i < first.length; i++) {
             dst[i] = first[i];
           }
-          for(var i = 0; i < second.length; i++) {
-            dst[i + first.length] = second[i];
+          for(var j = 0; j < second.length; j++, i++) {
+            dst[i] = second[j];
           }
           return this.answer(argCount, newString);
         },
