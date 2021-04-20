@@ -10768,6 +10768,39 @@
           return this.answer(argCount, receiver.asString());
         },
 
+        // Number instance methods
+        "primitiveNumberPrintString": function(argCount) {
+          if(argCount !== 0) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var value = null;
+          if(receiver.isFloat) {
+            value = receiver.float;
+          } else if(typeof receiver === "number") {
+            value = receiver;
+          }
+          if(value === null) return false;
+          return this.answer(argCount, value.toString());
+        },
+        "primitiveNumberPrintStringBase:": function(argCount) {
+          if(argCount !== 0) return false;
+          var base = this.interpreterProxy.stackValue(0);
+          if(typeof base !== "number" || base < 2 || base > 36) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var value = null;
+          if(receiver.isFloat) {
+            // Only support for floats with base 10
+            if(base === 10) {
+              // Javascript already has same String representation for NaN, Infinity and -Infinity
+              // No need to distinguish these here
+              value = receiver.float.toString();
+            }
+          } else if(typeof receiver === "number") {
+            value = receiver.toString(base);
+          }
+          if(value === null) return false;
+          return this.answer(argCount, value);
+        },
+
         // Integer instance methods
         "primitiveIntegerAtRandom": function(argCount) {
           if(argCount !== 0) return false;
@@ -10878,6 +10911,33 @@
             dst[i] = String.fromCodePoint(src[i]).toLowerCase().codePointAt(0);
           }
           return this.answer(argCount, lowercaseString);
+        },
+        "primitiveStringAsNumber": function(argCount) {
+          if(argCount !== 0) return false;
+          var numberString = this.interpreterProxy.stackValue(argCount).asString();
+          var result = null;
+          if(numberString === "NaN") {
+            result = Number.NaN;
+          } else if(numberString === "Infinity") {
+            result = Number.POSITIVE_INFINITY;
+          } else if(numberString === "-Infinity") {
+            result = Number.NEGATIVE_INFINITY;
+          } else {
+            var numberMatch = numberString.match(/^(\d+r)?(-?\d+(?:\.\d+)?(?:e-?\d)?)$/);
+            if(numberMatch) {
+              if(numberMatch[1]) {
+                // Currently only support for base/radix when using integers (not floats)
+                var base = Number.parseInt(numberMatch[1]);
+                if(base >= 2 && base <= 36 && numberMatch[2].indexOf(".") < 0 && numberMatch[2].indexOf("e") < 0) {
+                  result = Number.parseInt(numberMatch[2], base);
+                }
+              } else {
+                result = +numberMatch[2];
+              }
+            }
+          }
+          if(result === null) return false;
+          return this.answer(argCount, result);
         },
         "primitiveStringFindTokens:": function(argCount) {
           if(argCount !== 1) return false;
