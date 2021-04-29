@@ -11286,7 +11286,7 @@
           var result = {};
           associations.pointers.forEach(function(assoc) {
             if(!assoc.isNil) {
-              result[this.asJavascriptObject(assoc.pointers[0])] = thisHandle.asJavascriptObject(assoc.pointers[1]);
+              result[thisHandle.asJavascriptObject(assoc.pointers[0])] = thisHandle.asJavascriptObject(assoc.pointers[1]);
             }
           });
           return result;
