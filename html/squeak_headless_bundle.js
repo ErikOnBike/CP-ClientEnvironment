@@ -10782,7 +10782,7 @@
           return this.answer(argCount, value.toString());
         },
         "primitiveNumberPrintStringBase:": function(argCount) {
-          if(argCount !== 0) return false;
+          if(argCount !== 1) return false;
           var base = this.interpreterProxy.stackValue(0);
           if(typeof base !== "number" || base < 2 || base > 36) return false;
           var receiver = this.interpreterProxy.stackValue(argCount);
@@ -10798,7 +10798,7 @@
             value = receiver.toString(base);
           }
           if(value === null) return false;
-          return this.answer(argCount, value);
+          return this.answer(argCount, (base !== 10 ? base + "r" + value : value));
         },
 
         // Integer instance methods
