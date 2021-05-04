@@ -10761,6 +10761,53 @@
           return this.answer(argCount, registeredSymbol);
         },
 
+        // Symbol instance methods
+        "primitiveSymbolEquals:": function(argCount) {
+          if(argCount !== 1) return false;
+          var otherObject = this.interpreterProxy.stackValue(0);
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var result = otherObject === receiver;
+          if(!result) {
+            var src = receiver.bytes || receiver.words || [];
+            var dst = otherObject.bytes || otherObject.words || [];
+            if(src.length === dst.length) {
+              var i = 0;
+              result = true;	// Assume receiver and argument are equal for now
+              while(i < src.length && result) {
+                if(src[i] !== dst[i]) {
+                  result = false;	// A Character is different, so not equal (stop)
+                } else {
+                  i++;
+                }
+              }
+            }
+          }
+          return this.answer(argCount, result);
+        },
+        "primitiveSymbolIsLiteralSymbol": function(argCount) {
+          if(argCount !== 0) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var src = receiver.bytes || receiver.words || [];
+          var i = 1;
+          var result = src.length > 0;
+          if(result) {
+            var isLetter = function(c) { return (c >= 65 && c <= 90) || (c >= 97 && c <= 122); };
+            var isDigit = function(c) { return c >= 48 && c <= 57; };
+            var isBinary = function(c) { return [ 33, 37, 38, 42, 43, 44, 45, 47, 60, 61, 62, 63, 64, 92, 96, 124, 215, 247 ].indexOf(c) >= 0 || (c >= 126 && c <= 191 && [ 170, 181, 186 ].indexOf(c) < 0); };
+            var isColon = function(c) { return c === 58; };
+            var check = isLetter(src[0]) ? function(c) { return isLetter(c) || isDigit(c) || isColon(c); } :
+                        isBinary(src[0]) ? function(c) { return isBinary(c); } :
+                        null;
+            result = check !== null;
+            while(i < src.length && result) {
+              var asciiValue = src[i];
+              result = check(asciiValue);
+              i++;
+            }
+          }
+          return this.answer(argCount, result);
+        },
+
         // ByteArray instance methods
         "primitiveByteArrayAsString": function(argCount) {
           if(argCount !== 0) return false;
