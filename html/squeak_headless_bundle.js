@@ -11144,20 +11144,21 @@
           return this.answer(argCount, success);
         },
 		
-		// User defined JS function calling (only supports Integer and String params)
-		
-		"primitiveEnvironmentFunction:apply:": function(argCount) {
+		// Call user defined JS function with variable params (only supports Integer and String)
+		"primitiveEnvironmentJsCall:": function(argCount) {
           if(argCount < 1) return false;
-		  var fnName = this.interpreterProxy.stackValue(argCount-1).asString();
+		  var argIndex = argCount - 1;
+		  var fnName = this.interpreterProxy.stackValue(argIndex).asString();
 		  if(!fnName) return false;
 		  
-		  // Try to 
+		  // loop args and interprit string or numeric values
 		  var args = [];
-		  for (var i = argCount-2; i >= 0; i--) {
-			  var arg = this.interpreterProxy.stackValue(i);
+		  while(argIndex--) {
+			  var arg = this.interpreterProxy.stackValue(argIndex);
 			  args.push(isNaN(arg) ? arg.asString() : arg);
 		  }
-		  
+		  // internally we use '.apply' but from an external api this prim behaves more like '.call' 
+		  // as its a bit tricky to unpack an array parameter from Smalltalk
           return this.answer(argCount, window[fnName].apply(null,args));
 	    },
 
