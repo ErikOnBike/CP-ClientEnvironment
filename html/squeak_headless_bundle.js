@@ -11143,6 +11143,23 @@
 
           return this.answer(argCount, success);
         },
+		
+		// User defined JS function calling (only supports Integer and String params)
+		
+		"primitiveEnvironmentFunction:apply:": function(argCount) {
+          if(argCount < 1) return false;
+		  var fnName = this.interpreterProxy.stackValue(argCount-1).asString();
+		  if(!fnName) return false;
+		  
+		  // Try to 
+		  var args = [];
+		  for (var i = argCount-2; i >= 0; i--) {
+			  var arg = this.interpreterProxy.stackValue(i);
+			  args.push(isNaN(arg) ? arg.asString() : arg);
+		  }
+		  
+          return this.answer(argCount, window[fnName].apply(null,args));
+	    },
 
         // System logging
         "primitiveEnvironmentLog:": function(argCount) {
