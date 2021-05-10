@@ -10668,7 +10668,6 @@
 
     })(); // Register module/plugin
 	
-
     function CpSystemPlugin() {
 
       return {
@@ -11260,7 +11259,7 @@
           ;
         },
 
-        //Helper methods for converting from Smalltalk object to Javascript object and vice versa
+        // Helper methods for converting from Smalltalk object to Javascript object and vice versa
         asJavascriptObject: function(obj) {
           if(obj.isNil) {
             return null;
@@ -11274,7 +11273,7 @@
             return obj.float;
           } else if(obj.sqClass === this.arrayClass) {
             return this.arrayAsJavascriptObject(obj);
-		  } else if(obj.sqClass === this.dictionaryClass) {
+          } else if(obj.sqClass === this.dictionaryClass) {
             return this.dictionaryAsJavascriptObject(obj);
           }
           // Assume a String is used otherwise
@@ -11290,7 +11289,7 @@
           });
           return result;
         },
-		dictionaryAsJavascriptObject: function(obj) {
+        dictionaryAsJavascriptObject: function(obj) {
           var thisHandle = this;
           var associations = obj.pointers.find(function(pointer) {
             return pointer && pointer.sqClass === thisHandle.arrayClass;
@@ -11303,7 +11302,7 @@
             }
           });
           return result;
-	  },
+        },
         makeStPoint: function(x, y) {
           var newPoint = this.interpreterProxy.vm.instantiateClass(this.pointClass, 0);
           newPoint.pointers[0] = this.primHandler.makeStObject(x);
@@ -11360,7 +11359,7 @@
           return instance;
         },
 
-		// Call user defined JS function with array of params
+        // Call user defined JS function with array of params
 		"primitiveDomElementJsFunction:apply:": function(argCount) {
           if(argCount < 1) return false;
 		  var argIndex = argCount - 1;
