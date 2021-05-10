@@ -10667,6 +10667,7 @@
     registerPlugin();
 
     })(); // Register module/plugin
+	
 
     function CpSystemPlugin() {
 
@@ -11143,24 +11144,6 @@
 
           return this.answer(argCount, success);
         },
-		
-		// Call user defined JS function with variable params (only supports Integer and String)
-		"primitiveEnvironmentJsCall:": function(argCount) {
-          if(argCount < 1) return false;
-		  var argIndex = argCount - 1;
-		  var fnName = this.interpreterProxy.stackValue(argIndex).asString();
-		  if(!fnName) return false;
-		  
-		  // loop args and interprit string or numeric values
-		  var args = [];
-		  while(argIndex--) {
-			  var arg = this.interpreterProxy.stackValue(argIndex);
-			  args.push(isNaN(arg) ? arg.asString() : arg);
-		  }
-		  // internally we use '.apply' but from an external api this prim behaves more like '.call' 
-		  // as its a bit tricky to unpack an array parameter from Smalltalk
-          return this.answer(argCount, window[fnName].apply(null,args));
-	    },
 
         // System logging
         "primitiveEnvironmentLog:": function(argCount) {
@@ -11277,7 +11260,7 @@
           ;
         },
 
-        // Helper methods for converting from Smalltalk object to Javascript object and vice versa
+        //Helper methods for converting from Smalltalk object to Javascript object and vice versa
         asJavascriptObject: function(obj) {
           if(obj.isNil) {
             return null;
@@ -11289,13 +11272,25 @@
             return obj;
           } else if(obj.isFloat) {
             return obj.float;
-          } else if(obj.sqClass === this.dictionaryClass) {
+          } else if(obj.sqClass === this.arrayClass) {
+            return this.arrayAsJavascriptObject(obj);
+		  } else if(obj.sqClass === this.dictionaryClass) {
             return this.dictionaryAsJavascriptObject(obj);
           }
           // Assume a String is used otherwise
           return obj.asString();
         },
-        dictionaryAsJavascriptObject: function(obj) {
+        arrayAsJavascriptObject: function(obj) {
+          var thisHandle = this;
+          var result = [];
+          obj.pointers.forEach(function(item) {
+            if(!item.isNil) {
+			  result.push(thisHandle.asJavascriptObject(item));
+            }
+          });
+          return result;
+        },
+		dictionaryAsJavascriptObject: function(obj) {
           var thisHandle = this;
           var associations = obj.pointers.find(function(pointer) {
             return pointer && pointer.sqClass === thisHandle.arrayClass;
@@ -11308,7 +11303,7 @@
             }
           });
           return result;
-        },
+	  },
         makeStPoint: function(x, y) {
           var newPoint = this.interpreterProxy.vm.instantiateClass(this.pointClass, 0);
           newPoint.pointers[0] = this.primHandler.makeStObject(x);
@@ -11365,6 +11360,21 @@
           return instance;
         },
 
+		// Call user defined JS function with array of params
+		"primitiveDomElementJsFunction:apply:": function(argCount) {
+          if(argCount < 1) return false;
+		  var argIndex = argCount - 1;
+		  var fnName = this.interpreterProxy.stackValue(argIndex).asString();
+		  if(!fnName) return false;
+		  
+		  // extract arg array if present
+		  var args = [];
+		  if(argIndex--) {
+			  args = this.asJavascriptObject(this.interpreterProxy.stackValue(argIndex));
+		  }
+          return this.answer(argCount, window[fnName].apply(null,args));
+	    },
+		
         // DOM element class methods
         "primitiveDomElementRegisterNamespace:forPrefix:": function(argCount) {
           if(argCount !== 2) return false;
