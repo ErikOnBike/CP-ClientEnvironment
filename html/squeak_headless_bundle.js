@@ -11359,20 +11359,35 @@
           return instance;
         },
 
-        // Call user defined JS function with array of params
-		"primitiveDomElementJsFunction:apply:": function(argCount) {
-          if(argCount < 1) return false;
-		  var argIndex = argCount - 1;
-		  var fnName = this.interpreterProxy.stackValue(argIndex).asString();
-		  if(!fnName) return false;
-		  
-		  // extract arg array if present
-		  var args = [];
-		  if(argIndex--) {
-			  args = this.asJavascriptObject(this.interpreterProxy.stackValue(argIndex));
-		  }
-          return this.answer(argCount, window[fnName].apply(null,args));
-	    },
+		// Call user defined JS function with an array of params
+		"primitiveDomElementGlobalFunction:apply:": function(argCount) {
+			if(argCount < 1) return false;
+			var argIndex = argCount - 1;
+			var fnName = this.interpreterProxy.stackValue(argIndex).asString();
+			if(!fnName) return false;
+			
+			// extract arg array if present
+			var args = [];
+			if(argIndex--) {
+				args = this.asJavascriptObject(this.interpreterProxy.stackValue(argIndex));
+			}
+			return this.answer(argCount, window[fnName].apply(null,args));
+		},
+		"primitiveDomElementFunction:apply:": function(argCount) {
+			if(argCount < 1) return false;
+			var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+			if(!domElement) return false;
+			var argIndex = argCount - 1;
+			var fnName = this.interpreterProxy.stackValue(argIndex).asString();
+			if(!fnName) return false;
+			
+			// extract arg array if present
+			var args = [];
+			if(argIndex--) {
+				args = this.asJavascriptObject(this.interpreterProxy.stackValue(argIndex));
+			}
+			return this.answer(argCount, domElement[fnName].apply(domElement,args));
+		},
 		
         // DOM element class methods
         "primitiveDomElementRegisterNamespace:forPrefix:": function(argCount) {
