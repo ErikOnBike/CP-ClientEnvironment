@@ -10682,6 +10682,8 @@
           this.stringClass = this.interpreterProxy.vm.globalNamed("String");
           this.byteStringClass = this.interpreterProxy.vm.globalNamed("ByteString");
           this.wideStringClass = this.interpreterProxy.vm.globalNamed("WideString");
+          this.arrayClass = this.interpreterProxy.vm.globalNamed("Array");
+          this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
 
           // Add #asString behavior to String classes (converting from Smalltalk to Javascript Strings)
           this.stringClass.classInstProto().prototype.asString = function() {
@@ -10726,6 +10728,45 @@
           // Leave self on stack and only pop arguments
           this.interpreterProxy.pop(argCount);
           return true;
+        },
+
+        // Helper methods for converting from Smalltalk object to Javascript object and vice versa
+        asJavascriptObject: function(obj) {
+          if(obj.isNil) {
+            return null;
+          } else if(obj.isTrue) {
+            return true;
+          } else if(obj.isFalse) {
+            return false;
+          } else if(typeof obj === "number") {
+            return obj;
+          } else if(obj.isFloat) {
+            return obj.float;
+          } else if(obj.sqClass === this.arrayClass) {
+            return this.arrayAsJavascriptObject(obj);
+          } else if(obj.sqClass === this.dictionaryClass) {
+            return this.dictionaryAsJavascriptObject(obj);
+          }
+          // Assume a String is used otherwise
+          return obj.asString();
+        },
+        arrayAsJavascriptObject: function(obj) {
+          var thisHandle = this;
+          return obj.pointers.map(function(each) { return thisHandle.asJavascriptObject(each); });
+        },
+        dictionaryAsJavascriptObject: function(obj) {
+          var thisHandle = this;
+          var associations = obj.pointers.find(function(pointer) {
+            return pointer && pointer.sqClass === thisHandle.arrayClass;
+          });
+          if(!associations || !associations.pointers || !associations.pointers.forEach) throw Error("Dictionary has unexpected structure");
+          var result = {};
+          associations.pointers.forEach(function(assoc) {
+            if(!assoc.isNil) {
+              result[thisHandle.asJavascriptObject(assoc.pointers[0])] = thisHandle.asJavascriptObject(assoc.pointers[1]);
+            }
+          });
+          return result;
         },
 
         // Symbol class methods
@@ -11071,6 +11112,13 @@
           var message = this.interpreterProxy.stackValue(0).asString();
           return this.answer(argCount, window.confirm(message) === true);
         },
+        "primitiveEnvironmentGlobalApply:withArguments:": function(argCount) {
+          if(argCount !== 2) return false;
+          var functionName = this.interpreterProxy.stackValue(1).asString();
+          if(!functionName) return false;
+          var functionArguments = this.asJavascriptObject(this.interpreterProxy.stackValue(0));
+          return this.answer(argCount, window[functionName].apply(window, functionArguments));
+        },
         "primitiveEnvironmentReload": function(argCount) {
           if(argCount !== 0) return false;
           document.location.reload(true);
@@ -11232,9 +11280,8 @@
           this.interpreterProxy = anInterpreter;
           this.primHandler = this.interpreterProxy.vm.primHandler;
           this.pointClass = this.interpreterProxy.vm.globalNamed("Point");
-          this.arrayClass = this.interpreterProxy.vm.globalNamed("Array");
-          this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
           this.domElementClass = null; // Only known after installation
+          this.systemPlugin = Squeak.externalModules.CpSystemPlugin;
           this.addEventHandlers();
           this.runUpdateProcess();
           return true;
@@ -11306,46 +11353,13 @@
           ;
         },
 
-        // Helper methods for converting from Smalltalk object to Javascript object and vice versa
-        asJavascriptObject: function(obj) {
-          if(obj.isNil) {
-            return null;
-          } else if(obj.isTrue) {
-            return true;
-          } else if(obj.isFalse) {
-            return false;
-          } else if(typeof obj === "number") {
-            return obj;
-          } else if(obj.isFloat) {
-            return obj.float;
-          } else if(obj.sqClass === this.dictionaryClass) {
-            return this.dictionaryAsJavascriptObject(obj);
-          }
-          // Assume a String is used otherwise
-          return obj.asString();
-        },
-        dictionaryAsJavascriptObject: function(obj) {
-          var thisHandle = this;
-          var associations = obj.pointers.find(function(pointer) {
-            return pointer && pointer.sqClass === thisHandle.arrayClass;
-          });
-          if(!associations || !associations.pointers || !associations.pointers.forEach) throw Error("Dictionary has unexpected structure");
-          var result = {};
-          associations.pointers.forEach(function(assoc) {
-            if(!assoc.isNil) {
-              result[thisHandle.asJavascriptObject(assoc.pointers[0])] = thisHandle.asJavascriptObject(assoc.pointers[1]);
-            }
-          });
-          return result;
-        },
+        // Point helper methods
         makeStPoint: function(x, y) {
           var newPoint = this.interpreterProxy.vm.instantiateClass(this.pointClass, 0);
           newPoint.pointers[0] = this.primHandler.makeStObject(x);
           newPoint.pointers[1] = this.primHandler.makeStObject(y);
           return newPoint;
         },
-
-        // Point helper methods
         getPointX: function(stPoint) {
           return stPoint.pointers[0];
         },
@@ -11681,7 +11695,7 @@
           if(argCount !== 2) return false;
           var propertyName = this.interpreterProxy.stackValue(1).asString();
           if(!propertyName) return false;
-          var propertyValue = this.asJavascriptObject(this.interpreterProxy.stackValue(0));
+          var propertyValue = this.systemPlugin.asJavascriptObject(this.interpreterProxy.stackValue(0));
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           domElement[propertyName] = propertyValue;
@@ -11743,13 +11757,6 @@
           domElement.removeChild(childElement);
           return this.answer(argCount, childInstance);
         },
-        "primitiveDomElementFocus": function(argCount) {
-          if(argCount !== 0) return false;
-          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
-          if(!domElement) return false;
-          domElement.focus();
-          return this.answerSelf(argCount);
-        },
         "primitiveDomElementUnRegisterAllInterest": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
@@ -11757,6 +11764,15 @@
           delete domElement.__cp_events;
           delete domElement.__cp_element;
           return this.answerSelf(argCount);
+        },
+        "primitiveDomElementApply:withArguments:": function(argCount) {
+          if(argCount !== 2) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+          var functionName = this.interpreterProxy.stackValue(1).asString();
+          if(!functionName) return false;
+          var functionArguments = this.systemPlugin.asJavascriptObject(this.interpreterProxy.stackValue(0));
+          return this.answer(argCount, domElement[functionName].apply(domElement, functionArguments));
         },
 
         // HTMLElement class methods
