@@ -10752,7 +10752,7 @@
         },
         arrayAsJavascriptObject: function(obj) {
           var thisHandle = this;
-          return obj.pointers.map(function(each) { return thisHandle.asJavascriptObject(each); });
+          return (obj.pointers || []).map(function(each) { return thisHandle.asJavascriptObject(each); });
         },
         dictionaryAsJavascriptObject: function(obj) {
           var thisHandle = this;
