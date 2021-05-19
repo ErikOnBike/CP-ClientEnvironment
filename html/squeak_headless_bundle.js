@@ -11101,6 +11101,29 @@
           window.sessionStorage.removeItem(variableName);
           return this.answerSelf(argCount);
         },
+        "primitiveEnvironmentPersistentVariableAt:": function(argCount) {
+          if(argCount !== 1) return false;
+          var variableName = this.interpreterProxy.stackValue(0).asString();
+          if(!variableName) return false;
+          var variableValue = window.localStorage.getItem(variableName);
+          return this.answer(argCount, variableValue);
+        },
+        "primitiveEnvironmentPersistentVariableAt:put:": function(argCount) {
+          if(argCount !== 2) return false;
+          var variableName = this.interpreterProxy.stackValue(1).asString();
+          if(!variableName) return false;
+          var variableValue = this.interpreterProxy.stackValue(0).asString();
+          if(!variableValue) return false;
+          window.localStorage.setItem(variableName, variableValue);
+          return this.answerSelf(argCount);
+        },
+        "primitiveEnvironmentRemovePersistentVariableAt:": function(argCount) {
+          if(argCount !== 1) return false;
+          var variableName = this.interpreterProxy.stackValue(0).asString();
+          if(!variableName) return false;
+          window.localStorage.removeItem(variableName);
+          return this.answerSelf(argCount);
+        },
         "primitiveEnvironmentAlert:": function(argCount) {
           if(argCount !== 1) return false;
           var message = this.interpreterProxy.stackValue(0).asString();
