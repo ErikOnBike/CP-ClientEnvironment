@@ -10746,6 +10746,8 @@
             return this.arrayAsJavascriptObject(obj);
           } else if(obj.sqClass === this.dictionaryClass) {
             return this.dictionaryAsJavascriptObject(obj);
+          } else if(obj.domElement) {
+            return obj.domElement;
           }
           // Assume a String is used otherwise
           return obj.asString();
