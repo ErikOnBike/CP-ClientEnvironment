@@ -12270,9 +12270,8 @@
             elements: this.primHandler.makeStArray(elements),
             currentElementIndex: 1,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
-            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY)),
-            deltaX: event.deltaX,
-            deltaY: event.deltaY,
+            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY || 0)),
+            delta: this.makeStPoint(Math.floor(event.deltaX || 0), Math.floor(event.deltaY || 0)),
             deltaMode: event.deltaMode
           };
 
