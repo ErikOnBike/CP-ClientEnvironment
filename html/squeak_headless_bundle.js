@@ -11293,7 +11293,7 @@
         eventClasses: [],
         eventClassStructures: {},
         eventsReceived: [],
-        debounceEventTypes: [ "pointermove", "dragover", "resize", "scroll", "wheel" ],
+        debounceEventTypes: [ "pointermove", "wheel", "gesturechange" ],
         namespaces: [
           // Default namespaces (for attributes, therefore without elementClass)
           { prefix: "xlink", uri: "http://www.w3.org/1999/xlink", elementClass: null },
@@ -12113,6 +12113,30 @@
             );
           });
           [
+            "wheel"
+          ].forEach(function(scrollType) {
+            body.addEventListener(
+              scrollType,
+              function(event) {
+                thisHandle.handleWheelEvent(event);
+                thisHandle.handleEvents();
+              }
+            );
+          });
+          [
+            "gesturestart",
+            "gesturechange",
+            "gestureend"
+          ].forEach(function(gestureType) {
+            body.addEventListener(
+              gestureType,
+              function(event) {
+                thisHandle.handleGestureEvent(event);
+                thisHandle.handleEvents();
+              }
+            );
+          });
+          [
             "keydown",
             "keypress",
             "keyup"
@@ -12217,6 +12241,71 @@
             offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY)),
             pointerId: event.pointerId,
             pointerType: "" + event.pointerType
+          };
+
+          // Add or replace last event if same type (replace events as debouncing mechanism)
+          if(this.eventsReceived.length > 0 && this.eventsReceived[this.eventsReceived.length - 1].type === type && this.debounceEventTypes.indexOf(type) >= 0) {
+            this.eventsReceived[this.eventsReceived.length - 1] = receivedEvent;
+          } else {
+            this.eventsReceived.push(receivedEvent);
+          }
+        },
+        handleWheelEvent: function(event) {
+
+          // Find elements which are interested in the event
+          // and target which received the event
+          let elements = this.findInterestedElements(event);
+          if(elements.length === 0) {
+            return;
+          }
+          let target = this.findTarget(event);
+
+          // Store event
+          let type = event.type;
+          let receivedEvent = {
+            event: event,
+            type: type,
+            timeStamp: event.timeStamp,
+            target: target,
+            elements: this.primHandler.makeStArray(elements),
+            currentElementIndex: 1,
+            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
+            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY)),
+            deltaX: event.deltaX,
+            deltaY: event.deltaY,
+            deltaMode: event.deltaMode
+          };
+
+          // Add or replace last event if same type (replace events as debouncing mechanism)
+          if(this.eventsReceived.length > 0 && this.eventsReceived[this.eventsReceived.length - 1].type === type && this.debounceEventTypes.indexOf(type) >= 0) {
+            this.eventsReceived[this.eventsReceived.length - 1] = receivedEvent;
+          } else {
+            this.eventsReceived.push(receivedEvent);
+          }
+        },
+        handleGestureEvent: function(event) {
+
+          // Find elements which are interested in the event
+          // and target which received the event
+          let elements = this.findInterestedElements(event);
+          if(elements.length === 0) {
+            return;
+          }
+          let target = this.findTarget(event);
+
+          // Store event
+          let type = event.type;
+          let receivedEvent = {
+            event: event,
+            type: type,
+            timeStamp: event.timeStamp,
+            target: target,
+            elements: this.primHandler.makeStArray(elements),
+            currentElementIndex: 1,
+            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
+            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY)),
+            rotation: event.rotation,
+            scale: event.scale
           };
 
           // Add or replace last event if same type (replace events as debouncing mechanism)
