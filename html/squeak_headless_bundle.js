@@ -12097,7 +12097,9 @@
           [
             "pointerdown",
             "pointerup",
-            "pointermove"
+            "pointermove",
+            "pointerenter",
+            "pointerleave"
     //        "pointercancel" // Is this needed?
           ].forEach(function(pointerType) {
             body.addEventListener(
@@ -12240,7 +12242,8 @@
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
             offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY)),
             pointerId: event.pointerId,
-            pointerType: "" + event.pointerType
+            pointerType: "" + event.pointerType,
+            buttons: event.buttons || 0
           };
 
           // Add or replace last event if same type (replace events as debouncing mechanism)
