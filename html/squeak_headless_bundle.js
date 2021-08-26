@@ -12235,12 +12235,12 @@
           let receivedEvent = {
             event: event,
             type: type,
-            timeStamp: event.timeStamp,
+            timeStamp: Math.floor(event.timeStamp || 0),
             target: target,
             elements: this.primHandler.makeStArray(elements),
             currentElementIndex: 1,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
-            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY)),
+            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY || 0)),
             pointerId: event.pointerId,
             pointerType: "" + event.pointerType,
             buttons: event.buttons || 0
@@ -12268,7 +12268,7 @@
           let receivedEvent = {
             event: event,
             type: type,
-            timeStamp: event.timeStamp,
+            timeStamp: Math.floor(event.timeStamp || 0),
             target: target,
             elements: this.primHandler.makeStArray(elements),
             currentElementIndex: 1,
@@ -12300,12 +12300,12 @@
           let receivedEvent = {
             event: event,
             type: type,
-            timeStamp: event.timeStamp,
+            timeStamp: Math.floor(event.timeStamp || 0),
             target: target,
             elements: this.primHandler.makeStArray(elements),
             currentElementIndex: 1,
             point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
-            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY)),
+            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY || 0)),
             rotation: event.rotation,
             scale: event.scale
           };
@@ -12339,7 +12339,7 @@
           let receivedEvent = {
             event: event,
             type: event.type,
-            timeStamp: event.timeStamp,
+            timeStamp: Math.floor(event.timeStamp || 0),
             target: target,
             elements: this.primHandler.makeStArray(elements),
             currentElementIndex: 1,
@@ -12366,7 +12366,7 @@
           let receivedEvent = {
             event: event,
             type: event.type,
-            timeStamp: event.timeStamp,
+            timeStamp: Math.floor(event.timeStamp || 0),
             target: event.target,
             elements: this.primHandler.makeStArray(elements),
             currentElementIndex: 1,
@@ -12391,7 +12391,7 @@
           let receivedEvent = {
             event: event,
             type: event.type,
-            timeStamp: event.timeStamp,
+            timeStamp: Math.floor(event.timeStamp || 0),
             target: target,
             elements: this.primHandler.makeStArray(elements),
             currentElementIndex: 1,
@@ -12415,7 +12415,7 @@
           let receivedEvent = {
             event: event,
             type: event.type,
-            timeStamp: event.timeStamp,
+            timeStamp: Math.floor(event.timeStamp || 0),
             target: target,
             elements: this.primHandler.makeStArray(elements),
             currentElementIndex: 1,
@@ -12441,7 +12441,7 @@
           let receivedEvent = {
             event: event,
             type: event.type,
-            timeStamp: event.timeStamp,
+            timeStamp: Math.floor(event.timeStamp || 0),
             target: target,
             elements: this.primHandler.makeStArray(elements),
             currentElementIndex: 1,
