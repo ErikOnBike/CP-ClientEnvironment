@@ -12121,7 +12121,11 @@
               scrollType,
               function(event) {
                 thisHandle.handleWheelEvent(event);
-                thisHandle.handleEvents();
+
+                // Handle events directly, except for wheel events (for smooth behavior)
+                if(scrollType !== "wheel") {
+                  thisHandle.handleEvents();
+                }
               }
             );
           });
@@ -12230,6 +12234,14 @@
           }
           let target = this.findTarget(event);
 
+          // Encode modifiers
+          let modifiers =
+            (event.altKey ? 1 : 0) +
+            (event.ctrlKey ? 2 : 0) +
+            (event.metaKey ? 4 : 0) +
+            (event.shiftKey ? 8 : 0)
+          ;
+
           // Store event
           let type = event.type;
           let receivedEvent = {
@@ -12243,7 +12255,8 @@
             offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY || 0)),
             pointerId: event.pointerId,
             pointerType: "" + event.pointerType,
-            buttons: event.buttons || 0
+            buttons: event.buttons || 0,
+            modifiers: modifiers
           };
 
           // Add or replace last event if same type (replace events as debouncing mechanism)
