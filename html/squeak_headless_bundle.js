@@ -10859,6 +10859,18 @@
         },
 
         // Number instance methods
+        "primitiveNumberRaisedTo:": function(argCount) {
+          if(argCount !== 1) return false;
+          var exp = this.interpreterProxy.stackValue(0);
+          var base = null;
+          if(receiver.isFloat) {
+            base = receiver.float;
+          } else if(typeof receiver === "number") {
+            base = receiver;
+          }
+          if(base === null) return false;
+          return this.answer(argCount, Math.pow(base, exp));
+        },
         "primitiveNumberPrintString": function(argCount) {
           if(argCount !== 0) return false;
           var receiver = this.interpreterProxy.stackValue(argCount);
