@@ -10861,6 +10861,7 @@
         // Number instance methods
         "primitiveNumberRaisedTo:": function(argCount) {
           if(argCount !== 1) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
           var exp = this.interpreterProxy.stackValue(0);
           var base = null;
           if(receiver.isFloat) {
