@@ -12546,6 +12546,15 @@
           domElement.__cp_element = element;
           return this.answerSelf(argCount);
         },
+        "primitiveEventIsListenedToOn:": function(argCount) {
+          if(argCount !== 1) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var element = this.interpreterProxy.stackValue(0);
+          var domElement = element.domElement;
+          if(!domElement) return false;
+          var eventName = this.eventNameFromClass(receiver);
+          return this.answer(argCount, !!(domElement.__cp_events && domElement.__cp_events.has(eventName)));
+        },
         "primitiveEventLatestEvents": function(argCount) {
           if(argCount !== 0) return false;
 
