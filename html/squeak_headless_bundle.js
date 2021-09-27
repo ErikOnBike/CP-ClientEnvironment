@@ -12553,7 +12553,7 @@
           var domElement = element.domElement;
           if(!domElement) return false;
           var eventName = this.eventNameFromClass(receiver);
-          return this.answer(argCount, domElement.__cp_events && domElement.__cp_events.has(eventName));
+          return this.answer(argCount, !!(domElement.__cp_events && domElement.__cp_events.has(eventName)));
         },
         "primitiveEventLatestEvents": function(argCount) {
           if(argCount !== 0) return false;
