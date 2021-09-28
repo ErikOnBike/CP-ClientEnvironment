@@ -12228,7 +12228,8 @@
             "mouseup",
             "click",        // Explicitly, it is deduced in the Smalltalk code based on other events
     */
-            "contextmenu"
+            "contextmenu",
+            "dragstart"	// Prevent Firefox (and maybe other browsers) from doing native drag/drop
           ].forEach(function(touchType) {
             body.addEventListener(
               touchType,
