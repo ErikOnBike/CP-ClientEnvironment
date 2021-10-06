@@ -11319,6 +11319,7 @@
           this.primHandler = this.interpreterProxy.vm.primHandler;
           this.pointClass = this.interpreterProxy.vm.globalNamed("Point");
           this.domElementClass = null; // Only known after installation
+          this.domRectangleClass = null; // Only known after installation
           this.systemPlugin = Squeak.externalModules.CpSystemPlugin;
           this.addEventHandlers();
           this.runUpdateProcess();
@@ -11412,6 +11413,12 @@
           }
           return this.domElementClass;
         },
+        getDomRectangleClass: function() {
+          if(!this.domRectangleClass) {
+            this.domRectangleClass = this.interpreterProxy.vm.globalNamed("CpDomRectangle");
+          }
+          return this.domRectangleClass;
+        },
         addElementClassMapper: function(mapper) {
           this.customElementClassMappers.push(mapper);
         },
@@ -11444,6 +11451,16 @@
             this.domElementMap.set(element, instance);
           }
           return instance;
+        },
+        makeDomRectangle: function(rectangle) {
+          let domRectangleClass = this.getDomRectangleClass();
+          let domRectangle = this.interpreterProxy.vm.instantiateClass(domRectangleClass, 0);
+          domRectangleClass.allInstVarNames().forEach(function(name, index) {
+            if(rectangle[name] !== undefined) {
+              domRectangle.pointers[index] = Math.floor(rectangle[name]);
+            }
+          });
+          return domRectangle;
         },
 
         // DOM element class methods
@@ -11738,6 +11755,12 @@
           if(!domElement) return false;
           domElement[propertyName] = propertyValue;
           return this.answerSelf(argCount);
+        },
+        "primitiveDomElementBoundingClientRectangle": function(argCount) {
+          if(argCount !== 0) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+          return this.answer(argCount, this.makeDomRectangle(domElement.getBoundingClientRect()));
         },
         "primitiveDomElementClone": function(argCount) {
           if(argCount !== 0) return false;
