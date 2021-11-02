@@ -12071,7 +12071,13 @@
           if(this.eventHandlerProcess && this.eventsReceived.length > 0) {
     var start = null;
     if(window.sessionStorage.getItem("DEBUG")) start = performance.now();
+          // Temporary fix for situation (not yet uncovered) where interrupts would occur
+          if(!this.runningUninterrupted) {
+            this.runningUninterrupted = true;
             this.runUninterrupted(this.eventHandlerProcess);
+            this.runningUninterrupted = false;
+            this.handleEvents();	// Do another run for events that have occurred
+          }
     if(start !== null) console.log("Event handler took " + (performance.now() - start) + "ms");
           }
         },
