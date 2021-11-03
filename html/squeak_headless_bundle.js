@@ -11350,13 +11350,21 @@
 
         // Helper methods for answering (and setting the stack correctly)
         answer: function(argCount, value) {
-          this.interpreterProxy.popthenPush(argCount + 1, this.primHandler.makeStObject(value));
+          this.interpreterProxy.popthenPush(argCount + 1, this.makeStObject(value));
           return true;
         },
         answerSelf: function(argCount) {
           // Leave self on stack and only pop arguments
           this.interpreterProxy.pop(argCount);
           return true;
+        },
+        makeStObject: function(value) {
+          if(value !== undefined && value !== null) {
+            if(value.tagName && value.querySelectorAll) {
+              return this.instanceForElement(value);
+            }
+          }
+          return this.primHandler.makeStObject(value);
         },
 
         // Helper methods for namespaces
