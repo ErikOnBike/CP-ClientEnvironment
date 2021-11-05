@@ -11552,6 +11552,14 @@
           var firstMatchingElement = domElement.querySelector(querySelector);
           return this.answer(argCount, this.instanceForElement(firstMatchingElement));
         },
+        "primitiveDomElementMatches:": function(argCount) {
+          if(argCount !== 1) return false;
+          var selector = this.interpreterProxy.stackValue(0).asString();
+          if(!selector) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+          return this.answer(argCount, domElement.matches(selector));
+        },
         "primitiveDomElementParent": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
@@ -11585,7 +11593,7 @@
           var siblingElement = domElement.nextElementSibling;
           return this.answer(argCount, this.instanceForElement(siblingElement));
         },
-        "primitiveDomElementTag": function(argCount) {
+        "primitiveDomElementTagName": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
