@@ -11856,6 +11856,17 @@
           window.setTimeout(function() { domElement[functionName].apply(domElement, functionArguments); }, 0);
           return this.answerSelf(argCount);
         },
+        "primitiveDomElementSyncApply:withArguments:": function(argCount) {
+          if(argCount !== 2) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+          var functionName = this.interpreterProxy.stackValue(1).asString();
+          if(!functionName) return false;
+          var functionArguments = this.systemPlugin.asJavascriptObject(this.interpreterProxy.stackValue(0));
+          // This is the 'unsafe' variant of primitiveDomElementApply. See the comment there. Use with care.
+          // This variant is useful for performing getters.
+          return this.answer(argCount, domElement[functionName].apply(domElement, functionArguments));
+        },
 
         // HTMLElement class methods
         "primitiveHtmlElementDocumentHead": function(argCount) {
