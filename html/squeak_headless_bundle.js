@@ -10765,6 +10765,7 @@
           var result = {};
           associations.pointers.forEach(function(assoc) {
             if(!assoc.isNil) {
+              // Assume instVars are #key and #value (in that order)
               result[thisHandle.asJavascriptObject(assoc.pointers[0])] = thisHandle.asJavascriptObject(assoc.pointers[1]);
             }
           });
@@ -11164,7 +11165,7 @@
         },
 
         // WebSocket instance methods
-        "primitiveWebSocketConnectTo:withEventSemaphore:": function(argCount) {
+        "primitiveWebSocketConnectToUrl:withEventSemaphore:": function(argCount) {
           if(argCount !== 2) return false;
           var receiver = this.interpreterProxy.stackValue(argCount);
           var url = this.interpreterProxy.stackValue(1).asString();
@@ -11242,7 +11243,6 @@
               this.primHandler.signalSemaphoreWithIndex(webSocketHandle.semaIndex);
             }
           }
-
           return this.answer(argCount, success);
         },
         "primitiveWebSocketReadyState": function(argCount) {
@@ -11303,10 +11303,9 @@
         customTagMap: {},
         nestedTags: {},
         customElementClassMappers: [],
-        eventClasses: [],
-        eventClassStructures: {},
+        eventDefinitions: {},
         eventsReceived: [],
-        debounceEventTypes: [ "pointermove", "wheel", "gesturechange" ],
+        throttleEventTypes: [ "pointermove", "wheel", "gesturechange", "touchmove" ],
         namespaces: [
           // Default namespaces (for attributes, therefore without elementClass)
           { prefix: "xlink", uri: "http://www.w3.org/1999/xlink", elementClass: null },
@@ -11318,10 +11317,13 @@
           this.interpreterProxy = anInterpreter;
           this.primHandler = this.interpreterProxy.vm.primHandler;
           this.pointClass = this.interpreterProxy.vm.globalNamed("Point");
+          this.associationClass = this.interpreterProxy.vm.globalNamed("Association");
+          this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
           this.domElementClass = null; // Only known after installation
           this.domRectangleClass = null; // Only known after installation
           this.systemPlugin = Squeak.externalModules.CpSystemPlugin;
-          this.addEventHandlers();
+          this.updateMakeStObject();
+          this.preventDefaultEventHandling();
           this.runUpdateProcess();
           return true;
         },
@@ -11350,7 +11352,7 @@
 
         // Helper methods for answering (and setting the stack correctly)
         answer: function(argCount, value) {
-          this.interpreterProxy.popthenPush(argCount + 1, this.makeStObject(value));
+          this.interpreterProxy.popthenPush(argCount + 1, this.primHandler.makeStObject(value));
           return true;
         },
         answerSelf: function(argCount) {
@@ -11358,13 +11360,45 @@
           this.interpreterProxy.pop(argCount);
           return true;
         },
-        makeStObject: function(value) {
-          if(value !== undefined && value !== null) {
-            if(value.tagName && value.querySelectorAll) {
-              return this.instanceForElement(value);
-            }
+        updateMakeStObject: function() {
+          // Replace existing makeStObject function with more elaborate variant
+          if(this.originalMakeStObject) {
+            return;	// Already installed
           }
-          return this.primHandler.makeStObject(value);
+          var self = this;
+          self.originalMakeStObject = this.primHandler.makeStObject;
+          this.primHandler.makeStObject = function(obj, proxyClass) {
+            if(obj !== undefined && obj !== null) {
+              // Check for DOM element
+              if(obj.tagName && obj.querySelectorAll) {
+                return self.instanceForElement(obj);
+              }
+              // Check for Dictionary like element
+              if(obj.constructor === Object && !obj.sqClass) {
+                return self.makeStDictionary(obj);
+              }
+            }
+            return self.originalMakeStObject.call(this, obj, proxyClass);
+          };
+        },
+        makeStAssociation: function(key, value) {
+          var association = this.interpreterProxy.vm.instantiateClass(this.associationClass, 0);
+          // Assume instVars are #key and #value (in that order)
+          association.pointers[0] = this.primHandler.makeStObject(key);
+          association.pointers[1] = this.primHandler.makeStObject(value);
+          return association;
+        },
+        makeStDictionary: function(obj) {
+          var dictionary = this.interpreterProxy.vm.instantiateClass(this.dictionaryClass, 0);
+          var keys = Object.keys(obj);
+          var self = this;
+          var associations = keys.map(function(key) {
+            return self.makeStAssociation(key, obj[key]);
+          });
+          // Assume instVars are #tally and #array (in that order)
+          var tally = dictionary.pointers[0] = keys.length;
+          var array = dictionary.pointers[1] = this.primHandler.makeStArray(associations);
+          return dictionary;
         },
 
         // Helper methods for namespaces
@@ -11401,12 +11435,6 @@
         },
 
         // Point helper methods
-        makeStPoint: function(x, y) {
-          var newPoint = this.interpreterProxy.vm.instantiateClass(this.pointClass, 0);
-          newPoint.pointers[0] = this.primHandler.makeStObject(x);
-          newPoint.pointers[1] = this.primHandler.makeStObject(y);
-          return newPoint;
-        },
         getPointX: function(stPoint) {
           return stPoint.pointers[0];
         },
@@ -12109,20 +12137,21 @@
         },
 
         // Event handling
-        makeStEvent: function(event) {
-          let eventClassStructure = this.findEventClassStructure(event.type);
-          if(!eventClassStructure) {
-            return null;
-          }
+        makeStEvent: function(eventObject) {
 
           // Create new instance and connect original event
-          let newEvent = this.interpreterProxy.vm.instantiateClass(eventClassStructure.eventClass, 0);
-          newEvent.event = event.event;
+          let event = eventObject.event;
+          let eventDefinition = this.eventDefinitions[event.type];
+          let newEvent = this.interpreterProxy.vm.instantiateClass(eventDefinition.eventClass, 0);
+          newEvent.event = event;
 
           // Set event properties
           let primHandler = this.primHandler;
-          eventClassStructure.instVarNames.forEach(function(instVarName, index) {
-            let value = event[instVarName];
+          eventDefinition.instVarNames.forEach(function(instVarName, index) {
+            let value = eventObject.specials[instVarName];
+            if(value === undefined) {
+              value = event[instVarName];
+            }
             if(value !== undefined && value !== null) {
               newEvent.pointers[index] = primHandler.makeStObject(value);
             }
@@ -12130,159 +12159,11 @@
 
           return newEvent;
         },
-        findEventClassStructure: function(eventType) {
-          return this.eventClassStructures[eventType] ||
-            (this.eventClassStructures[eventType] = this.buildEventClassStructure(eventType));
-        },
-        buildEventClassStructure: function(eventType) {
-          let eventClass = this.findEventClass(eventType);
-          if(!eventClass) {
-            return null;
-          }
-
-          // Create structure with class and all its instance variable names
-          return {
-            eventClass: eventClass,
-            instVarNames: eventClass.allInstVarNames()
-          };
-        },
-        findEventClass: function(eventType) {
-          let thisHandle = this;
-          return this.eventClasses.find(function(eventClass) {
-            return thisHandle.eventNameFromClass(eventClass) === eventType;
-          });
-        },
-        eventNameFromClass: function(eventClass) {
-          return eventClass.className()
-            .replace(/^Cp/, "")
-            .replace(/Event$/, "")
-            .toLowerCase()
-          ;
-        },
-        addEventHandlers: function() {
+        preventDefaultEventHandling: function() {
           let body = window.document.body;
-          let thisHandle = this;
-          [
-            "pointerdown",
-            "pointerup",
-            "pointermove",
-            "pointerenter",
-            "pointerleave"
-    //        "pointercancel" // Is this needed?
-          ].forEach(function(pointerType) {
-            body.addEventListener(
-              pointerType,
-              function(event) {
-                thisHandle.handlePointerEvent(event);
-
-                // Handle events directly, except for move events (for smooth behavior)
-                if(pointerType !== "pointermove") {
-                  thisHandle.handleEvents();
-                }
-              }
-            );
-          });
-          [
-            "wheel"
-          ].forEach(function(scrollType) {
-            body.addEventListener(
-              scrollType,
-              function(event) {
-                thisHandle.handleWheelEvent(event);
-
-                // Handle events directly, except for wheel events (for smooth behavior)
-                if(scrollType !== "wheel") {
-                  thisHandle.handleEvents();
-                }
-              }
-            );
-          });
-          [
-            "gesturestart",
-            "gesturechange",
-            "gestureend"
-          ].forEach(function(gestureType) {
-            body.addEventListener(
-              gestureType,
-              function(event) {
-                thisHandle.handleGestureEvent(event);
-                thisHandle.handleEvents();
-              }
-            );
-          });
-          [
-            "keydown",
-            "keypress",
-            "keyup"
-          ].forEach(function(inputType) {
-            body.addEventListener(
-              inputType,
-              function(event) {
-                thisHandle.handleKeyEvent(event);
-                thisHandle.handleEvents();
-              }
-            );
-          });
-          [
-            "compositionstart",
-            "compositionupdate",
-            "compositionend"
-          ].forEach(function(inputType) {
-            body.addEventListener(
-              inputType,
-              function(event) {
-                thisHandle.handleCompositionEvent(event);
-                thisHandle.handleEvents();
-              }
-            );
-          });
-          [
-            "change"
-          ].forEach(function(inputType) {
-            body.addEventListener(
-              inputType,
-              function(event) {
-                thisHandle.handleChangeEvent(event);
-                thisHandle.handleEvents();
-              }
-            );
-          });
-          [
-            "beforeinput",
-            "input"
-          ].forEach(function(inputType) {
-            body.addEventListener(
-              inputType,
-              function(event) {
-                thisHandle.handleInputEvent(event);
-                thisHandle.handleEvents();
-              }
-            );
-          });
-          [
-            "focusin",
-            "focusout"
-          ].forEach(function(focusType) {
-            body.addEventListener(
-              focusType,
-              function(event) {
-                thisHandle.handleFocusEvent(event);
-                thisHandle.handleEvents();
-              }
-            );
-          });
 
           // Prevent default behavior for number of events
           [
-    /*
-            "touchstart",   // @@ToDo: add these back later
-            "touchmove",    // @@ToDo: add these back later
-            "touchend",     // @@ToDo: add these back later
-            "mousedown",
-            "mousemove",
-            "mouseup",
-            "click",        // Explicitly, it is deduced in the Smalltalk code based on other events
-    */
             "contextmenu",
             "dragstart"	// Prevent Firefox (and maybe other browsers) from doing native drag/drop
           ].forEach(function(touchType) {
@@ -12293,246 +12174,6 @@
               }
             );
           });
-        },
-        handlePointerEvent: function(event) {
-
-          // Find elements which are interested in the event
-          // and target which received the event
-          let elements = this.findInterestedElements(event);
-          if(elements.length === 0) {
-            return;
-          }
-          let target = this.findTarget(event);
-
-          // Encode modifiers
-          let modifiers =
-            (event.altKey ? 1 : 0) +
-            (event.ctrlKey ? 2 : 0) +
-            (event.metaKey ? 4 : 0) +
-            (event.shiftKey ? 8 : 0)
-          ;
-
-          // Store event
-          let type = event.type;
-          let receivedEvent = {
-            event: event,
-            type: type,
-            timeStamp: Math.floor(event.timeStamp || 0),
-            target: target,
-            elements: this.primHandler.makeStArray(elements),
-            currentElementIndex: 1,
-            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
-            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY || 0)),
-            pointerId: event.pointerId,
-            pointerType: "" + event.pointerType,
-            buttons: event.buttons || 0,
-            modifiers: modifiers
-          };
-
-          // Add or replace last event if same type (replace events as debouncing mechanism)
-          if(this.eventsReceived.length > 0 && this.eventsReceived[this.eventsReceived.length - 1].type === type && this.debounceEventTypes.indexOf(type) >= 0) {
-            this.eventsReceived[this.eventsReceived.length - 1] = receivedEvent;
-          } else {
-            this.eventsReceived.push(receivedEvent);
-          }
-        },
-        handleWheelEvent: function(event) {
-
-          // Find elements which are interested in the event
-          // and target which received the event
-          let elements = this.findInterestedElements(event);
-          if(elements.length === 0) {
-            return;
-          }
-          let target = this.findTarget(event);
-
-          // Store event
-          let type = event.type;
-          let receivedEvent = {
-            event: event,
-            type: type,
-            timeStamp: Math.floor(event.timeStamp || 0),
-            target: target,
-            elements: this.primHandler.makeStArray(elements),
-            currentElementIndex: 1,
-            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
-            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY || 0)),
-            delta: this.makeStPoint(Math.floor(event.deltaX || 0), Math.floor(event.deltaY || 0)),
-            deltaMode: event.deltaMode
-          };
-
-          // Add or replace last event if same type (replace events as debouncing mechanism)
-          if(this.eventsReceived.length > 0 && this.eventsReceived[this.eventsReceived.length - 1].type === type && this.debounceEventTypes.indexOf(type) >= 0) {
-            this.eventsReceived[this.eventsReceived.length - 1] = receivedEvent;
-          } else {
-            this.eventsReceived.push(receivedEvent);
-          }
-        },
-        handleGestureEvent: function(event) {
-
-          // Find elements which are interested in the event
-          // and target which received the event
-          let elements = this.findInterestedElements(event);
-          if(elements.length === 0) {
-            return;
-          }
-          let target = this.findTarget(event);
-
-          // Store event
-          let type = event.type;
-          let receivedEvent = {
-            event: event,
-            type: type,
-            timeStamp: Math.floor(event.timeStamp || 0),
-            target: target,
-            elements: this.primHandler.makeStArray(elements),
-            currentElementIndex: 1,
-            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
-            offset: this.makeStPoint(Math.floor(event.offsetX || 0), Math.floor(event.offsetY || 0)),
-            rotation: event.rotation,
-            scale: event.scale
-          };
-
-          // Add or replace last event if same type (replace events as debouncing mechanism)
-          if(this.eventsReceived.length > 0 && this.eventsReceived[this.eventsReceived.length - 1].type === type && this.debounceEventTypes.indexOf(type) >= 0) {
-            this.eventsReceived[this.eventsReceived.length - 1] = receivedEvent;
-          } else {
-            this.eventsReceived.push(receivedEvent);
-          }
-        },
-        handleKeyEvent: function(event) {
-
-          // Find elements which are interested in the event
-          // and target which received the event
-          let elements = this.findInterestedElements(event);
-          if(elements.length === 0) {
-            return;
-          }
-          let target = this.findTarget(event);
-
-          // Encode modifiers
-          let modifiers =
-            (event.altKey ? 1 : 0) +
-            (event.ctrlKey ? 2 : 0) +
-            (event.metaKey ? 4 : 0) +
-            (event.shiftKey ? 8 : 0)
-          ;
-
-          // Store event
-          let receivedEvent = {
-            event: event,
-            type: event.type,
-            timeStamp: Math.floor(event.timeStamp || 0),
-            target: target,
-            elements: this.primHandler.makeStArray(elements),
-            currentElementIndex: 1,
-            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
-            modifiers: modifiers,
-            key: "" + event.key,
-            isComposing: !!event.isComposing
-          };
-
-          // Add event
-          this.eventsReceived.push(receivedEvent);
-        },
-        handleCompositionEvent: function(event) {
-
-          // Find elements which are interested in the event
-          // and target which received the event
-          let elements = this.findInterestedElements(event);
-          if(elements.length === 0) {
-            return;
-          }
-          let target = this.findTarget(event);
-
-          // Store event
-          let receivedEvent = {
-            event: event,
-            type: event.type,
-            timeStamp: Math.floor(event.timeStamp || 0),
-            target: event.target,
-            elements: this.primHandler.makeStArray(elements),
-            currentElementIndex: 1,
-            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
-            data: event.data
-          };
-
-          // Add event
-          this.eventsReceived.push(receivedEvent);
-        },
-        handleChangeEvent: function(event) {
-
-          // Find elements which are interested in the event
-          // and target which received the event
-          let elements = this.findInterestedElements(event);
-          if(elements.length === 0) {
-            return;
-          }
-          let target = this.findTarget(event);
-
-          // Store event
-          let receivedEvent = {
-            event: event,
-            type: event.type,
-            timeStamp: Math.floor(event.timeStamp || 0),
-            target: target,
-            elements: this.primHandler.makeStArray(elements),
-            currentElementIndex: 1,
-            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0))
-          };
-
-          // Add event
-          this.eventsReceived.push(receivedEvent);
-        },
-        handleInputEvent: function(event) {
-
-          // Find elements which are interested in the event
-          // and target which received the event
-          let elements = this.findInterestedElements(event);
-          if(elements.length === 0) {
-            return;
-          }
-          let target = this.findTarget(event);
-
-          // Store event
-          let receivedEvent = {
-            event: event,
-            type: event.type,
-            timeStamp: Math.floor(event.timeStamp || 0),
-            target: target,
-            elements: this.primHandler.makeStArray(elements),
-            currentElementIndex: 1,
-            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0)),
-            data: event.data,
-            inputType: "" + event.inputType
-          };
-
-          // Add event
-          this.eventsReceived.push(receivedEvent);
-        },
-        handleFocusEvent: function(event) {
-
-          // Find elements which are interested in the event
-          // and target which received the event
-          let elements = this.findInterestedElements(event);
-          if(elements.length === 0) {
-            return;
-          }
-          let target = this.findTarget(event);
-
-          // Store event
-          let receivedEvent = {
-            event: event,
-            type: event.type,
-            timeStamp: Math.floor(event.timeStamp || 0),
-            target: target,
-            elements: this.primHandler.makeStArray(elements),
-            currentElementIndex: 1,
-            point: this.makeStPoint(Math.floor(event.pageX || 0), Math.floor(event.pageY || 0))
-          };
-
-          // Add event
-          this.eventsReceived.push(receivedEvent);
         },
         findInterestedElements: function(event) {
           let type = event.type;
@@ -12574,6 +12215,47 @@
             return this.instanceForElement(event.target);
           }
         },
+        addEvent: function(event) {
+
+          // Add event object with a few special properties.
+          // The modifiers property is added as a convenience to access all
+          // modifiers through a single value.
+          let eventObject = {
+            event: event,
+            specials: {
+              modifiers:
+                (event.altKey ? 1 : 0) +
+                (event.ctrlKey ? 2 : 0) +
+                (event.metaKey ? 4 : 0) +
+                (event.shiftKey ? 8 : 0),
+              target: this.findTarget(event),
+              elements: this.findInterestedElements(event),
+              currentElementIndex: 1
+            }
+          };
+
+          // Add or replace last event (if same type replace events as throttling mechanism)
+          let type = event.type;
+          if(this.eventsReceived.length > 0 && this.eventsReceived[this.eventsReceived.length - 1].event.type === type && this.throttleEventTypes.includes(type)) {
+            this.eventsReceived[this.eventsReceived.length - 1] = eventObject;
+          } else {
+            this.eventsReceived.push(eventObject);
+          }
+        },
+        handleEvent: function(event) {
+
+          // Prevent the event from propagation (bubbling in this case).
+          // This will be handled in the Smalltalk code itself.
+          event.stopImmediatePropagation();
+
+          // Add the event to the collection of events to handlee
+          this.addEvent(event);
+
+          // Directly handle the available events
+          if(!this.throttleEventTypes.includes(event.type)) {
+            this.handleEvents();
+          }
+        },
 
         // Event class methods
         "primitiveEventRegisterProcess:": function(argCount) {
@@ -12581,11 +12263,15 @@
           this.eventHandlerProcess = this.interpreterProxy.stackValue(0);
           return this.answerSelf(argCount);
         },
-        "primitiveEventRegisterClass:": function(argCount) {
-          if(argCount !== 1) return false;
-          let eventClass = this.interpreterProxy.stackValue(0);
-          this.eventClasses.push(eventClass);
-          delete this.eventClassStructures[this.eventNameFromClass(eventClass)];
+        "primitiveEventRegisterClass:forType:": function(argCount) {
+          if(argCount !== 2) return false;
+          let type = this.interpreterProxy.stackValue(0).asString();
+          let eventClass = this.interpreterProxy.stackValue(1);
+          eventClass.type = type;
+          this.eventDefinitions[type] = {
+            eventClass: eventClass,
+            instVarNames: eventClass.allInstVarNames()
+          };
           return this.answerSelf(argCount);
         },
         "primitiveEventAddListenerTo:": function(argCount) {
@@ -12594,12 +12280,16 @@
           var element = this.interpreterProxy.stackValue(0);
           var domElement = element.domElement;
           if(!domElement) return false;
-          var eventName = this.eventNameFromClass(receiver);
+          var eventName = receiver.type;
           if(!domElement.__cp_events) {
             domElement.__cp_events = new Set();
           }
           domElement.__cp_events.add(eventName);
           domElement.__cp_element = element;
+          var thisHandle = this;
+          domElement.addEventListener(eventName, function(event) {
+            thisHandle.handleEvent(event);
+          });
           return this.answerSelf(argCount);
         },
         "primitiveEventIsListenedToOn:": function(argCount) {
@@ -12608,7 +12298,7 @@
           var element = this.interpreterProxy.stackValue(0);
           var domElement = element.domElement;
           if(!domElement) return false;
-          var eventName = this.eventNameFromClass(receiver);
+          var eventName = receiver.type;
           return this.answer(argCount, !!(domElement.__cp_events && domElement.__cp_events.has(eventName)));
         },
         "primitiveEventLatestEvents": function(argCount) {
