@@ -11163,6 +11163,12 @@
           document.location.reload(true);
           return this.answerSelf(argCount);
         },
+        "primitiveEnvironmentLog:": function(argCount) {
+          if(argCount !== 1) return false;
+          var message = this.interpreterProxy.stackValue(0).asString();
+          console.log(Date.now() + " " + message);
+          return this.answerSelf(argCount);
+        },
 
         // WebSocket instance methods
         "primitiveWebSocketConnectToUrl:withEventSemaphore:": function(argCount) {
@@ -11275,14 +11281,6 @@
           }
 
           return this.answer(argCount, success);
-        },
-
-        // System logging
-        "primitiveEnvironmentLog:": function(argCount) {
-          if(argCount !== 1) return false;
-          var message = this.interpreterProxy.stackValue(0).asString();
-          console.log(Date.now() + " " + message);
-          return this.answerSelf(argCount);
         }
       };
     }
