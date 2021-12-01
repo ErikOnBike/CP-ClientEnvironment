@@ -12186,7 +12186,7 @@
 
               // Keep first element which is interested
               if(node.__cp_events && node.__cp_events.has(type)) {
-                elements.push(this.instanceForElement(node));
+                elements.push(node);
               }
               node = composedPath[++index];
             }
@@ -12196,12 +12196,43 @@
 
               // Keep first element which is interested
               if(node.__cp_events && node.__cp_events.has(type)) {
-                elements.push(this.instanceForElement(node));
+                elements.push(node);
               }
               node = node.parentElement;
             }
           }
-          return elements;
+
+          // For mouse events, add elements which are beneath the current pointer.
+          // Browsers don't do this by default. When an HTML element is directly
+          // under the pointer, only this element and its predecessors are taken
+          // into account. If HTML elements overlap because of positioning/placement
+          // the elements beneath the top elements are out of luck. Let's show some
+          // love and add them to the party of interested elements.
+          // Check for MouseEvent using duck-typing (do NOT use pageX and pageY here
+          // since some browsers still have these properties on UIEvent, see
+          // https://docs.w3cub.com/dom/uievent/pagex).
+          if(event.offsetX !== undefined && event.offsetY !== undefined) {
+            document.elementsFromPoint(event.pageX, event.pageY).forEach(function(element) {
+              if(element.__cp_events && element.__cp_events.has(type) && !elements.includes(element)) {
+                // Find correct position within structure (leaf elements first, root element last).
+                // Find common element (towards leafs and put new element directly after it).
+                let commonElement = element.parentElement;
+                let index = -1;
+                while(commonElement && index < 0) {
+                  index = elements.indexOf(commonElement);
+                  commonElement = commonElement.parentElement;
+                }
+                if(index < 0) {
+                  elements.push(element);
+                } else {
+                  elements.splice(index, 0, element);
+                }
+              }
+            });
+          }
+
+          var thisHandle = this;
+          return elements.map(function(element) { return thisHandle.instanceForElement(element); });
         },
         findTarget: function(event) {
 
