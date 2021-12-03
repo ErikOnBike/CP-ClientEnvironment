@@ -11489,9 +11489,10 @@
         makeDomRectangle: function(rectangle) {
           let domRectangleClass = this.getDomRectangleClass();
           let domRectangle = this.interpreterProxy.vm.instantiateClass(domRectangleClass, 0);
+          let primHandler = this.primHandler;
           domRectangleClass.allInstVarNames().forEach(function(name, index) {
             if(rectangle[name] !== undefined) {
-              domRectangle.pointers[index] = Math.floor(rectangle[name]);
+              domRectangle.pointers[index] = primHandler.makeStObject(rectangle[name]);
             }
           });
           return domRectangle;
