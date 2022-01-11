@@ -11304,6 +11304,7 @@
         eventDefinitions: {},
         eventsReceived: [],
         throttleEventTypes: [ "pointermove", "wheel", "gesturechange", "touchmove" ],
+        preventDefaultEventTypes: [ "contextmenu", "wheel", "dragstart" ],	// "dragstart" is to prevent Firefox (and maybe other browsers) from doing native drag/drop
         namespaces: [
           // Default namespaces (for attributes, therefore without elementClass)
           { prefix: "xlink", uri: "http://www.w3.org/1999/xlink", elementClass: null },
@@ -11321,7 +11322,6 @@
           this.domRectangleClass = null; // Only known after installation
           this.systemPlugin = Squeak.externalModules.CpSystemPlugin;
           this.updateMakeStObject();
-          this.preventDefaultEventHandling();
           this.runUpdateProcess();
           return true;
         },
@@ -12158,22 +12158,6 @@
 
           return newEvent;
         },
-        preventDefaultEventHandling: function() {
-          let body = window.document.body;
-
-          // Prevent default behavior for number of events
-          [
-            "contextmenu",
-            "dragstart"	// Prevent Firefox (and maybe other browsers) from doing native drag/drop
-          ].forEach(function(touchType) {
-            body.addEventListener(
-              touchType,
-              function(event) {
-                event.preventDefault();
-              }
-            );
-          });
-        },
         findInterestedElements: function(event) {
           let type = event.type;
           let elements = [];
@@ -12320,6 +12304,10 @@
           domElement.__cp_element = element;
           var thisHandle = this;
           domElement.addEventListener(eventName, function(event) {
+            if(thisHandle.preventDefaultEventTypes.includes(event.type)) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+            }
             thisHandle.handleEvent(event);
           });
           return this.answerSelf(argCount);
