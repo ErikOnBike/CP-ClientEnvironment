@@ -10678,6 +10678,7 @@
         setInterpreter: function(anInterpreter) {
           this.interpreterProxy = anInterpreter;
           this.primHandler = this.interpreterProxy.vm.primHandler;
+          this.characterClass = this.interpreterProxy.vm.globalNamed("Character");
           this.symbolClass = this.interpreterProxy.vm.globalNamed("Symbol");
           this.stringClass = this.interpreterProxy.vm.globalNamed("String");
           this.byteStringClass = this.interpreterProxy.vm.globalNamed("ByteString");
@@ -11059,6 +11060,12 @@
             }
           }
           return this.answer(argCount, result);
+        },
+        "primitiveStringIndexOf:": function(argCount) {
+          if(argCount !== 1) return false;
+          var character = this.interpreterProxy.stackValue(0);
+          var string = this.interpreterProxy.stackValue(argCount).asString();
+          return this.answer(argCount, character.sqClass === this.characterClass ? string.indexOf(String.fromCodePoint(character.hash)) + 1 : 0); 
         },
         "primitiveStringIncludesSubstring:": function(argCount) {
           if(argCount !== 1) return false;
