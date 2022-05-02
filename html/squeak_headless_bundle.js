@@ -113,8 +113,8 @@
     Object.extend(Squeak,
     "version", {
         // system attributes
-        vmVersion: "SqueakJS 1.0.3",
-        vmDate: "2021-03-21",               // Maybe replace at build time?
+        vmVersion: "SqueakJS 1.0.4",
+        vmDate: "2021-05-31",               // Maybe replace at build time?
         vmBuild: "unknown",                 // or replace at runtime by last-modified?
         vmPath: "unknown",                  // Replace at runtime
         vmFile: "vm.js",
@@ -1446,7 +1446,8 @@
     },
     'initializing', {
         initialize: function(name) {
-            this.totalMemory = 100000000;
+            this.headRoom = 32000000; // TODO: pass as option
+            this.totalMemory = 0;
             this.name = name;
             this.gcCount = 0;
             this.gcMilliseconds = 0;
@@ -1650,6 +1651,8 @@
                 this.lastOldObject = object;
                 this.lastOldObject.nextObject = null; // Add next object pointer as indicator this is in fact an old object
             }
+
+            this.totalMemory = this.oldSpaceBytes + this.headRoom;
 
             {
                 // For debugging: re-create all objects from named prototypes
@@ -5435,7 +5438,7 @@
                 case 175: if (this.oldPrims) return this.namedPrimitive('SoundPlugin', 'primitiveSoundPlaySilence', argCount);
                     else return this.popNandPushIfOK(argCount+1, this.behaviorHash(this.stackNonInteger(0)));
                 case 176: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primWaveTableSoundmixSampleCountintostartingAtpan', argCount);
-                    break;  // fail
+                    else return this.popNandPushIfOK(argCount+1, this.vm.image.isSpur ? 0x3FFFFF : 0xFFF); // primitiveMaxIdentityHash
                 case 177: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primFMSoundmixSampleCountintostartingAtpan', argCount);
                     return this.popNandPushIfOK(argCount+1, this.allInstancesOf(this.stackNonInteger(0)));
                 case 178: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primPluckedSoundmixSampleCountintostartingAtpan', argCount);
@@ -6630,7 +6633,7 @@
             block.pointers[Squeak.BlockContext_caller] = this.vm.activeContext;
             this.vm.popN(argCount+1);
             this.vm.newActiveContext(block);
-            if (this.vm.interruptCheckCounter-- <= 0) this.vm.checkForInterrupts(); // jit compile block method
+            if (this.vm.interruptCheckCounter-- <= 0) this.vm.checkForInterrupts();
             return true;
         },
         primitiveBlockValueWithArgs: function(argCount) {
@@ -6649,7 +6652,7 @@
             block.pointers[Squeak.BlockContext_caller] = this.vm.activeContext;
             this.vm.popN(argCount+1);
             this.vm.newActiveContext(block);
-            if (this.vm.interruptCheckCounter-- <= 0) this.vm.checkForInterrupts(); // jit compile block method
+            if (this.vm.interruptCheckCounter-- <= 0) this.vm.checkForInterrupts();
             return true;
         },
         primitiveClosureCopyWithCopiedValues: function(argCount) {
@@ -6661,7 +6664,9 @@
             var blockClosure = this.vm.stackValue(argCount),
                 blockArgCount = blockClosure.pointers[Squeak.Closure_numArgs];
             if (argCount !== blockArgCount) return false;
-            return this.activateNewClosureMethod(blockClosure, argCount);
+            this.activateNewClosureMethod(blockClosure, argCount);
+            if (this.vm.interruptCheckCounter-- <= 0) this.vm.checkForInterrupts();
+            return true;
         },
         primitiveClosureValueWithArgs: function(argCount) {
             var array = this.vm.top(),
@@ -6672,16 +6677,25 @@
             this.vm.pop();
             for (var i = 0; i < arraySize; i++)
                 this.vm.push(array.pointers[i]);
-            return this.activateNewClosureMethod(blockClosure, arraySize);
+            this.activateNewClosureMethod(blockClosure, arraySize);
+            if (this.vm.interruptCheckCounter-- <= 0) this.vm.checkForInterrupts();
+            return true;
         },
         primitiveClosureValueNoContextSwitch: function(argCount) {
-            return this.primitiveClosureValue(argCount);
+            // An exact clone of primitiveClosureValue except that this version will not check for interrupts
+            var blockClosure = this.vm.stackValue(argCount),
+                blockArgCount = blockClosure.pointers[Squeak.Closure_numArgs];
+            if (argCount !== blockArgCount) return false;
+            this.activateNewClosureMethod(blockClosure, argCount);
+            return true;
         },
         primitiveFullClosureValue: function(argCount) {
             var blockClosure = this.vm.stackValue(argCount),
                 blockArgCount = blockClosure.pointers[Squeak.Closure_numArgs];
             if (argCount !== blockArgCount) return false;
-            return this.activateNewFullClosure(blockClosure, argCount);
+            this.activateNewFullClosure(blockClosure, argCount);
+            if (this.vm.interruptCheckCounter-- <= 0) this.vm.checkForInterrupts();
+            return true;
         },
         primitiveFullClosureValueWithArgs: function(argCount) {
             var array = this.vm.top(),
@@ -6692,10 +6706,17 @@
             this.vm.pop();
             for (var i = 0; i < arraySize; i++)
                 this.vm.push(array.pointers[i]);
-            return this.activateNewFullClosure(blockClosure, arraySize);
+            this.activateNewFullClosure(blockClosure, arraySize);
+            if (this.vm.interruptCheckCounter-- <= 0) this.vm.checkForInterrupts();
+            return true;
         },
         primitiveFullClosureValueNoContextSwitch: function(argCount) {
-            return this.primitiveFullClosureValue(argCount);
+            // An exact clone of primitiveFullClosureValue except that this version will not check for interrupts
+            var blockClosure = this.vm.stackValue(argCount),
+                blockArgCount = blockClosure.pointers[Squeak.Closure_numArgs];
+            if (argCount !== blockArgCount) return false;
+            this.activateNewFullClosure(blockClosure, argCount);
+            return true;
         },
         activateNewClosureMethod: function(blockClosure, argCount) {
             var outerContext = blockClosure.pointers[Squeak.Closure_outerContext],
@@ -6717,7 +6738,6 @@
             // The initial instructions in the block nil-out remaining temps.
             this.vm.popN(argCount + 1);
             this.vm.newActiveContext(newContext);
-            return true;
         },
         activateNewFullClosure: function(blockClosure, argCount) {
             var closureMethod = blockClosure.pointers[Squeak.ClosureFull_method],
@@ -6738,7 +6758,6 @@
             // No need to nil-out remaining temps as context pointers are nil-initialized.
             this.vm.popN(argCount + 1);
             this.vm.newActiveContext(newContext);
-            return true;
         },
     },
     'scheduling', {
@@ -7380,7 +7399,7 @@
             this.vm = vm;
             this.comments = !!Squeak.Compiler.comments, // generate comments
             // for debug-printing only
-            this.specialSelectors = ['+', '-', '<', '>', '<=', '>=', '=', '~=', '*', '/', '\\', '@',
+            this.specialSelectors = ['+', '-', '<', '>', '<=', '>=', '=', '~=', '*', '/', '\\\\', '@',
                 'bitShift:', '//', 'bitAnd:', 'bitOr:', 'at:', 'at:put:', 'size', 'next', 'nextPut:',
                 'atEnd', '==', 'class', 'blockCopy:', 'value', 'value:', 'do:', 'new', 'new:', 'x', 'y'];
             this.doitCounter = 0;
@@ -11817,9 +11836,7 @@
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
-          var clone = domElement.cloneNode(true);
-          clone.removeAttribute("id");	// Remove id to prevent duplicates
-          return this.answer(argCount, this.instanceForElement(clone));
+          return this.answer(argCount, this.instanceForElement(domElement.cloneNode(true)));
         },
         "primitiveDomElementAppendChild:": function(argCount) {
           if(argCount !== 1) return false;
