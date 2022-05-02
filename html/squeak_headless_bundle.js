@@ -11836,7 +11836,18 @@
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
-          return this.answer(argCount, this.instanceForElement(domElement.cloneNode(true)));
+          var clone = domElement.cloneNode(false);
+          // Remove id to prevent duplication
+          clone.removeAttribute("id");
+          // Find first text node and copy its content
+          var textNode = domElement.firstChild;
+          while(textNode && textNode.nodeType !== 3) {
+            textNode = textNode.nextSibling;
+          }
+          if(textNode) {
+            clone.textContent = textNode.textContent;
+          }
+          return this.answer(argCount, this.instanceForElement(clone));
         },
         "primitiveDomElementAppendChild:": function(argCount) {
           if(argCount !== 1) return false;
