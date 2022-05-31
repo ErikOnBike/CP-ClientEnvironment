@@ -11449,8 +11449,14 @@
         // Helper method to create a tag name from a class name
         tagNameFromClass: function(aClass) {
 
+          // Special case
+          var className = aClass.className();
+          if(className === "CpView") {
+            return "cp-view";
+          }
+
           // Remove camelCase and use dashes, all lowercase
-          return aClass.className()
+          return className
             .replace(/View$/, "")                 // Remove View as postfix for nicer readability
             .replace(/([a-z])([A-Z])/g, "$1-$2")
             .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
