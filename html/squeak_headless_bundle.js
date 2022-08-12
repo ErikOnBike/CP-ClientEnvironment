@@ -539,8 +539,8 @@
             return swapped.getFloat64(0, true);
         },
         fillArray: function(length, filler) {
-            for (var array = [], i = 0; i < length; i++)
-                array[i] = filler;
+            var array = new Array(length);
+            array.fill(filler);
             return array;
         },
     },
@@ -5606,13 +5606,24 @@
             return this.success;
         },
         doNamedPrimitive: function(argCount, primMethod) {
-            if (primMethod.pointersSize() < 2) return false;
-            var firstLiteral = primMethod.pointers[1]; // skip method header
-            if (firstLiteral.pointersSize() !== 4) return false;
-            this.primMethod = primMethod;
-            var moduleName = firstLiteral.pointers[0].bytesAsString();
-            var functionName = firstLiteral.pointers[1].bytesAsString();
-            return this.namedPrimitive(moduleName, functionName, argCount);
+            if (!primMethod.primFunction) {
+                if (primMethod.pointersSize() < 2) return false;
+                var firstLiteral = primMethod.pointers[1]; // skip method header
+                if (firstLiteral.pointersSize() !== 4) return false;
+                this.primMethod = primMethod;
+                var moduleName = firstLiteral.pointers[0].bytesAsString();
+                var functionName = firstLiteral.pointers[1].bytesAsString();
+                primMethod.primFunction = this.loadFunctionFrom(functionName, moduleName);
+                if (!primMethod.primFunction) return false;
+            }
+            this.interpreterProxy.argCount = argCount;
+            var sp = this.vm.sp;
+            var result = primMethod.primFunction(argCount);
+            if ((result === true || (result !== false && this.success)) && this.vm.sp !== sp - argCount && !this.vm.frozen) {
+                this.vm.warnOnce("stack unbalanced after primitive " + modName + "." + functionName, "error");
+            }
+            if (result === true || result === false) return result;
+            return this.success;
         },
         fakePrimitive: function(prim, retVal, argCount) {
             // fake a named primitive
@@ -7599,6 +7610,7 @@
                         case 2: this.generatePush("lit[", 1 + (byte2 & 0x3F), "]"); return;
                         case 3: this.generatePush("lit[", 1 + (byte2 & 0x3F), "].pointers[1]"); return;
                     }
+                    return;
                 // extended store
                 case 0x81:
                     byte2 = this.method.bytes[this.pc++];
@@ -7618,6 +7630,7 @@
                         case 2: throw Error("illegal pop into literal");
                         case 3: this.generatePopInto("lit[", 1 + (byte2 & 0x3F), "].pointers[1]"); return;
                     }
+                    return;
                 // Single extended send
                 case 0x83:
                     byte2 = this.method.bytes[this.pc++];
@@ -7637,6 +7650,7 @@
                         case 6: this.generatePopInto("inst[", byte3, "]"); return;
                         case 7: this.generateStoreInto("lit[", 1 + byte3, "].pointers[1]"); return;
                     }
+                    return;
                 // Single extended send to super
                 case 0x85:
                     byte2 = this.method.bytes[this.pc++];
