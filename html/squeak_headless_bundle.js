@@ -11206,7 +11206,19 @@
         "primitiveEnvironmentLog:": function(argCount) {
           if(argCount !== 1) return false;
           var message = this.interpreterProxy.stackValue(0).asString();
-          console.log(Date.now() + " " + message);
+          console.log((new Date()).toISOString() + " " + message);
+          return this.answerSelf(argCount);
+        },
+        "primitiveEnvironmentWarn:": function(argCount) {
+          if(argCount !== 1) return false;
+          var message = this.interpreterProxy.stackValue(0).asString();
+          console.warn((new Date()).toISOString() + " " + message);
+          return this.answerSelf(argCount);
+        },
+        "primitiveEnvironmentError:": function(argCount) {
+          if(argCount !== 1) return false;
+          var message = this.interpreterProxy.stackValue(0).asString();
+          console.error((new Date()).toISOString() + " " + message);
           return this.answerSelf(argCount);
         },
 
