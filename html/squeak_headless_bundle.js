@@ -12012,6 +12012,43 @@
           return this.answer(argCount, this.instanceForElement(domElement.shadowRoot));
         },
 
+        // WebComponent instance methods
+        "primitiveWebComponentTextContent": function(argCount) {
+          if(argCount !== 0) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+
+          // Extract text nodes from myself and all children (not being slotted elements)
+          var text = "";
+          var child = domElement.firstChild;
+          while(child) {
+            if((child.nodeType === 1 && !child.slot) || child.nodeType === 3) {
+              text += child.textContent;
+            }
+            child = child.nextSibling;
+          }
+          return this.answer(argCount, text);
+        },
+        "primitiveWebComponentTextContent:": function(argCount) {
+          if(argCount !== 1) return false;
+          var textContent = this.interpreterProxy.stackValue(0).asString();
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+
+          // Remove any existing content (not being slotted elements)
+          // and then add a new text node.
+          var child = domElement.firstChild;
+          while(child) {
+            var nextChild = child.nextSibling;
+            if(!(child.nodeType === 1 && child.slot)) {
+              child.parentNode.removeChild(child);
+            }
+            child = nextChild;
+          }
+          domElement.appendChild(window.document.createTextNode(textContent));
+          return this.answerSelf(argCount);
+        },
+
         // TemplateComponent helper methods
         ensureShadowRoot: function(elementClass, domElement) {
 
