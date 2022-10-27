@@ -11150,6 +11150,14 @@
           window.sessionStorage.setItem(variableName, variableValue);
           return this.answerSelf(argCount);
         },
+        "primitiveEnvironmentVariableNames": function(argCount) {
+          if(argCount !== 0) return false;
+          var variableNames = new Array(window.sessionStorage.length);
+          for(var i = 0; i < window.sessionStorage.length; i++) {
+            variableNames[i] = window.sessionStorage.key(i);
+          }
+          return this.answer(argCount, variableNames);
+        },
         "primitiveEnvironmentRemoveVariableAt:": function(argCount) {
           if(argCount !== 1) return false;
           var variableName = this.interpreterProxy.stackValue(0).asString();
