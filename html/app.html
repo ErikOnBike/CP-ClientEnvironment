@@ -14,6 +14,12 @@
       }
       window.sessionStorage.setItem("APP", appNameFromUrl);
     }
+    // Extract location hash (optional action code)
+    let codeFromUrl = document.location.hash.slice(1);
+    if(codeFromUrl !== "") {
+        window.sessionStorage.setItem("CODE", codeFromUrl);
+        document.location.hash = "";
+    }
 
     // Set server location
     window.sessionStorage.setItem("SERVER_URL", document.location.protocol.replace("http", "ws") + "//" + document.location.host + "/io");
