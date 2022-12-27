@@ -10806,6 +10806,26 @@
           return result;
         },
 
+        // Object instance methods
+        "primitiveObjectCrTrace:": function(argCount) {
+          if(argCount !== 1) return false;
+          var message = this.interpreterProxy.stackValue(0).asString();
+          console.log((new Date()).toISOString() + " " + message);
+          return this.answerSelf(argCount);
+        },
+        "primitiveObjectCrWarn:": function(argCount) {
+          if(argCount !== 1) return false;
+          var message = this.interpreterProxy.stackValue(0).asString();
+          console.warn((new Date()).toISOString() + " " + message);
+          return this.answerSelf(argCount);
+        },
+        "primitiveObjectCrError:": function(argCount) {
+          if(argCount !== 1) return false;
+          var message = this.interpreterProxy.stackValue(0).asString();
+          console.error((new Date()).toISOString() + " " + message);
+          return this.answerSelf(argCount);
+        },
+
         // Symbol class methods
         newSymbol: function(string) {
           var newSymbol = this.interpreterProxy.vm.instantiateClass(this.symbolClass, string.length);
@@ -11209,24 +11229,6 @@
         "primitiveEnvironmentReload": function(argCount) {
           if(argCount !== 0) return false;
           document.location.reload(true);
-          return this.answerSelf(argCount);
-        },
-        "primitiveEnvironmentLog:": function(argCount) {
-          if(argCount !== 1) return false;
-          var message = this.interpreterProxy.stackValue(0).asString();
-          console.log((new Date()).toISOString() + " " + message);
-          return this.answerSelf(argCount);
-        },
-        "primitiveEnvironmentWarn:": function(argCount) {
-          if(argCount !== 1) return false;
-          var message = this.interpreterProxy.stackValue(0).asString();
-          console.warn((new Date()).toISOString() + " " + message);
-          return this.answerSelf(argCount);
-        },
-        "primitiveEnvironmentError:": function(argCount) {
-          if(argCount !== 1) return false;
-          var message = this.interpreterProxy.stackValue(0).asString();
-          console.error((new Date()).toISOString() + " " + message);
           return this.answerSelf(argCount);
         },
 
