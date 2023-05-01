@@ -11260,7 +11260,7 @@
             thisHandle.primHandler.signalSemaphoreWithIndex(webSocketHandle.semaIndex);
           };
           webSocket.onerror = function(event) {
-            console.error("Failure on WebSocket for url [" + webSocketHandle.url + "]: ", event);
+            console.error("Failure on WebSocket for url [" + webSocketHandle.url + "]: ", JSON.stringify(event));
             thisHandle.primHandler.signalSemaphoreWithIndex(webSocketHandle.semaIndex);
           };
           webSocket.onmessage = function(event) {
@@ -11307,7 +11307,7 @@
               webSocketHandle.webSocket.send(sendBuffer.bytes);
               success = true;
             } catch(e) {
-              console.error("Failed to write websocket message", error);
+              console.error("Failed to write websocket message", e);
               this.primHandler.signalSemaphoreWithIndex(webSocketHandle.semaIndex);
             }
           }
@@ -11338,7 +11338,7 @@
               success = true;
             }
           } catch(e) {
-            console.error("Failed to close websocket", error);
+            console.error("Failed to close websocket", e);
             this.primHandler.signalSemaphoreWithIndex(webSocketHandle.semaIndex);
           }
 
