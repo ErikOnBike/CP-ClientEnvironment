@@ -11679,6 +11679,14 @@
           var siblingElement = domElement.nextElementSibling;
           return this.answer(argCount, this.instanceForElement(siblingElement));
         },
+        "primitiveDomElementIsDescendantOf:": function(argCount) {
+          if(argCount !== 1) return false;
+          var parentElement = this.interpreterProxy.stackValue(0).domElement;
+          if(!parentElement) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+          return this.answer(argCount, parentElement !== domElement && parentElement.contains(domElement));
+        },
         "primitiveDomElementTagName": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
@@ -12442,6 +12450,7 @@
             if(event.__cp_stop_after === null) {
               isStopped = true;
             } else if(event.__cp_stop_after !== event.__cp_current_target) {
+              // Event bubbled past the currentTarget, value no longer needed
               event.__cp_stop_after = null;
               delete event.__cp_current_target;
               isStopped = true;
