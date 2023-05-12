@@ -11432,6 +11432,8 @@
             }
             return self.originalMakeStObject.call(this, obj, proxyClass);
           };
+          // Make sure document has a localName
+          document.localName = "document";
         },
         makeStAssociation: function(key, value) {
           var association = this.interpreterProxy.vm.instantiateClass(this.associationClass, 0);
