@@ -11397,7 +11397,7 @@
 
           // If process did not finish in time, put it to sleep
           if(process === scheduler.pointers[Squeak.ProcSched_activeProcess]) {
-    console.warn("Process put to sleep because it did not finish in time: " + (process === this.transitionProcess ? "transition" : process === this.eventHandlerProcess ? "process" : "unknown"));
+    //console.warn("Process put to sleep because it did not finish in time: " + (process === this.transitionProcess ? "transition" : process === this.eventHandlerProcess ? "process" : "unknown"));
             primHandler.putToSleep(process);
           }
         },
