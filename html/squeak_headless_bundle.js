@@ -113,8 +113,8 @@
     Object.extend(Squeak,
     "version", {
         // system attributes
-        vmVersion: "SqueakJS 1.0.4",
-        vmDate: "2021-05-31",               // Maybe replace at build time?
+        vmVersion: "SqueakJS 1.0.5",
+        vmDate: "2022-11-19",               // Maybe replace at build time?
         vmBuild: "unknown",                 // or replace at runtime by last-modified?
         vmPath: "unknown",                  // Replace at runtime
         vmFile: "vm.js",
@@ -462,14 +462,6 @@
                 //These words are actually a Float
                 this.isFloat = true;
                 this.float = this.decodeFloat(bits, littleEndian, nativeFloats);
-                if (this.float == 1.3797216632888e-310) {
-                    if (Squeak.noFloatDecodeWorkaround) ; else {
-                        this.constructor.prototype.decodeFloat = this.decodeFloatDeoptimized;
-                        this.float = this.decodeFloat(bits, littleEndian, nativeFloats);
-                        if (this.float == 1.3797216632888e-310)
-                            throw Error("Cannot deoptimize decodeFloat");
-                    }
-                }
             } else {
                 if (nWords > 0)
                     this.words = this.decodeWords(nWords, bits, littleEndian);
@@ -519,23 +511,6 @@
                 swapped = new DataView(buffer);
             swapped.setUint32(0, data.getUint32(4));
             swapped.setUint32(4, data.getUint32(0));
-            return swapped.getFloat64(0, true);
-        },
-        decodeFloatDeoptimized: function(theBits, littleEndian, nativeFloats) {
-            var data = new DataView(theBits.buffer, theBits.byteOffset);
-            // it's either big endian ...
-            if (!littleEndian) return data.getFloat64(0, false);
-            // or real little endian
-            if (nativeFloats) return data.getFloat64(0, true);
-            // or little endian, but with swapped words
-            var buffer = new ArrayBuffer(8),
-                swapped = new DataView(buffer);
-            // wrap in function to defeat Safari's optimizer, which always
-            // answers 1.3797216632888e-310 if called more than 25000 times
-            (function() {
-                swapped.setUint32(0, data.getUint32(4));
-                swapped.setUint32(4, data.getUint32(0));
-            })();
             return swapped.getFloat64(0, true);
         },
         fillArray: function(length, filler) {
@@ -1007,14 +982,6 @@
                         //These words are actually a Float
                         this.isFloat = true;
                         this.float = this.decodeFloat(bits, littleEndian, true);
-                        if (this.float == 1.3797216632888e-310) {
-                            if (Squeak.noFloatDecodeWorkaround) ; else {
-                                this.constructor.prototype.decodeFloat = this.decodeFloatDeoptimized;
-                                this.float = this.decodeFloat(bits, littleEndian, true);
-                                if (this.float == 1.3797216632888e-310)
-                                    throw Error("Cannot deoptimize decodeFloat");
-                            }
-                        }
                     } else if (nWords > 0) {
                         this.words = this.decodeWords(nWords, bits, littleEndian);
                     }
@@ -1493,23 +1460,26 @@
                 }
             };
             // read version and determine endianness
-            var versions = [6501, 6502, 6504, 6505, 6521, 68000, 68002, 68003, 68021],
+            var baseVersions = [6501, 6502, 6504, 68000, 68002, 68004],
+                baseVersionMask = 0x119EE,
                 version = 0,
                 fileHeaderSize = 0;
             while (true) {  // try all four endianness + header combos
                 littleEndian = !littleEndian;
                 pos = fileHeaderSize;
                 version = readWord();
-                if (versions.indexOf(version) >= 0) break;
+                if (baseVersions.indexOf(version & baseVersionMask) >= 0) break;
                 if (!littleEndian) fileHeaderSize += 512;
-                if (fileHeaderSize > 512) throw Error("bad image version");
+                if (fileHeaderSize > 512) throw Error("bad image version"); // we tried all combos
             }        this.version = version;
-            var nativeFloats = [6505, 6521, 68003, 68021].indexOf(version) >= 0;
-            this.hasClosures = [6504, 6505, 6521, 68002, 68003, 68021].indexOf(version) >= 0;
-            this.isSpur = [6521, 68021].indexOf(version) >= 0;
+            var nativeFloats = (version & 1) !== 0;
+            this.hasClosures = !([6501, 6502, 68000].indexOf(version) >= 0);
+            this.isSpur = (version & 16) !== 0;
+            // var multipleByteCodeSetsActive = (version & 256) !== 0; // not used
             var is64Bit = version >= 68000;
             if (is64Bit && !this.isSpur) throw Error("64 bit non-spur images not supported yet");
             if (is64Bit)  { readWord = readWord64; wordSize = 8; }
+            console.log(`squeak: Image Spur: ${this.isSpur} is64Bit: ${is64Bit} hasClosures: ${this.hasClosures} version: ${version}`);
             // parse image header
             var imageHeaderSize = readWord32(); // always 32 bits
             var objectMemorySize = readWord(); //first unused location in heap
@@ -2521,9 +2491,10 @@
                     var classObj = this.classTable[classID];
                     if (classObj && classObj.pointers) {
                         if (!classObj.hash) throw Error("class without id");
-                        if (classObj.hash !== classID && classID >= 32) {
+                        if (classObj.hash !== classID && classID >= 32 || classObj.oop < 0) {
                             console.warn("freeing class index " + classID + " " + classObj.className());
                             classObj = null;
+                            delete this.classTable[classID];
                         }
                     }
                     if (classObj) data.setUint32(pos, objToOop(classObj), littleEndian);
@@ -5572,6 +5543,7 @@
                 case 575: this.vm.warnOnce("missing primitive: 575 (primitiveHighBit)"); return false;
                 // this is not really a primitive, see findSelectorInClass()
                 case 576: return this.vm.primitiveInvokeObjectAsMethod(argCount, primMethod);
+                case 578: this.vm.warnOnce("missing primitive: 578 (primitiveSuspendAndBackupPC)"); return false; // see bit 5 of vmParameterAt: 65
             }
             console.error("primitive " + index + " not implemented yet");
             return false;
@@ -5620,7 +5592,10 @@
             var sp = this.vm.sp;
             var result = primMethod.primFunction(argCount);
             if ((result === true || (result !== false && this.success)) && this.vm.sp !== sp - argCount && !this.vm.frozen) {
-                this.vm.warnOnce("stack unbalanced after primitive " + modName + "." + functionName, "error");
+                var firstLiteral = primMethod.pointers[1]; // skip method header
+                var moduleName = firstLiteral.pointers[0].bytesAsString();
+                var functionName = firstLiteral.pointers[1].bytesAsString();
+                this.vm.warnOnce("stack unbalanced after primitive " + moduleName + "." + functionName, "error");
             }
             if (result === true || result === false) return result;
             return this.success;
@@ -7138,6 +7113,8 @@
                 //             to others at the same priority.
                 //      Bit 3: in a muilt-threaded VM, if set, the Window system will only be accessed from the first VM thread
                 //      Bit 4: in a Spur vm, if set, causes weaklings and ephemerons to be queued individually for finalization
+                //      Bit 5: if set, implies wheel events will be delivered as such and not mapped to arrow key events
+                //      Bit 6: if set, implies arithmetic primitives will fail if given arguments of different types (float vs int)
                 // 49   the size of the external semaphore table (read-write; Cog VMs only)
                 // 50-51 reserved for VM parameters that persist in the image (such as eden above)
                 // 52   root (remembered) table maximum size (read-only)
@@ -7155,14 +7132,23 @@
                 // 64   current number of machine code methods (read-only; Cog VMs only)
                 // 65   In newer Cog VMs a set of flags describing VM features,
                 //      if non-zero bit 0 implies multiple bytecode set support;
-                //      if non-zero bit 0 implies read-only object support
+                //      if non-zero bit 1 implies read-only object support;
+                //      if non-zero bit 2 implies the VM suffers from using an ITIMER heartbeat (if 0 it has a thread that provides the heartbeat)
+                //      if non-zero bit 3 implies the VM supports cross-platform BIT_IDENTICAL_FLOATING_POINT arithmetic
+                //      if non-zero bit 4 implies the VM can catch exceptions in FFI calls and answer them as primitive failures
+                //      if non-zero bit 5 implies the VM's suspend primitive backs up the process to before the wait if it was waiting on a condition variable
                 //      (read-only; Cog VMs only; nil in older Cog VMs, a boolean answering multiple bytecode support in not so old Cog VMs)
                 case 65: return 0;
                 // 66   the byte size of a stack page in the stack zone  (read-only; Cog VMs only)
                 // 67   the maximum allowed size of old space in bytes, 0 implies no internal limit (Spur VMs only).
                 // 68 - 69 reserved for more Cog-related info
                 // 70   the value of VM_PROXY_MAJOR (the interpreterProxy major version number)
-                // 71   the value of VM_PROXY_MINOR (the interpreterProxy minor version number)"
+                // 71   the value of VM_PROXY_MINOR (the interpreterProxy minor version number)
+                // 72   total milliseconds in full GCs Mark phase since startup (read-only)
+                // 73   total milliseconds in full GCs Sweep phase since startup (read-only, can be 0 depending on compactors)
+                // 74   maximum pause time due to segment allocation
+                // 75   whether arithmetic primitives will do mixed type arithmetic; if false they fail for different receiver and argument types
+                // 76   the minimum unused headroom in all stack pages; Cog VMs only
             }
             return null;
         },
@@ -7171,6 +7157,7 @@
                 return this.popNandPushIfOK(1, this.makeStString(this.filenameToSqueak(this.vm.image.name)));
             this.vm.image.name = this.filenameFromSqueak(this.vm.top().bytesAsString());
             Squeak.Settings['squeakImageName'] = this.vm.image.name;
+            this.vm.popN(argCount);
             return true;
         },
         primitiveSnapshot: function(argCount) {
@@ -8432,7 +8419,7 @@
                         // Ignore display.quitFlag when requested.
                         // Some Smalltalk images quit when no display is found.
                         if(options.ignoreQuit || !display.quitFlag) {
-                            setTimeout(run, ms === "sleep" ? 10 : ms);
+                            setTimeout(run, ms === "sleep" ? 200 : ms);
                         }
                     });
                 } catch(e) {
@@ -11118,7 +11105,7 @@
           if(argCount !== 1) return false;
           var character = this.interpreterProxy.stackValue(0);
           var string = this.interpreterProxy.stackValue(argCount).asString();
-          return this.answer(argCount, character.sqClass === this.characterClass ? string.indexOf(String.fromCodePoint(character.hash)) + 1 : 0); 
+          return this.answer(argCount, character.sqClass === this.characterClass ? string.indexOf(String.fromCodePoint(character.hash)) + 1 : 0);
         },
         "primitiveStringIncludesSubstring:": function(argCount) {
           if(argCount !== 1) return false;
@@ -11288,7 +11275,7 @@
 
           // Get next receive buffer
           var receiveBuffer = webSocketHandle.buffers.splice(0, 1)[0];  // Remove first element and keep it
-          var result = receiveBuffer ? this.primHandler.makeStByteArray(receiveBuffer) : this.interpreterProxy.nilObject(); 
+          var result = receiveBuffer ? this.primHandler.makeStByteArray(receiveBuffer) : this.interpreterProxy.nilObject();
 
           // Answer ByteArray or nil
           return this.answer(argCount, result);
@@ -11318,7 +11305,7 @@
           var receiver = this.interpreterProxy.stackValue(argCount);
           var webSocketHandle = receiver.webSocketHandle;
           if(!webSocketHandle) return false;
-     
+
           // Get ready state
           var readyState = webSocketHandle.webSocket.readyState;
 
@@ -11363,10 +11350,9 @@
         customTagMap: {},
         nestedTags: {},
         customElementClassMappers: [],
-        eventDefinitions: {},
+        eventClassMap: {},
         eventsReceived: [],
-        throttleEventTypes: [ "pointermove", "wheel", "gesturechange" ],
-        preventDefaultEventTypes: [ "wheel" ],	// These need be applied on element level (vs only on body as in preventDefaultEventHandling)
+        throttleEventTypes: [ "pointermove", "touchmove", "wheel", "gesturechange" ],
         namespaces: [
           // Default namespaces (for attributes, therefore without elementClass)
           { prefix: "xlink", uri: "http://www.w3.org/1999/xlink", elementClass: null },
@@ -11384,7 +11370,6 @@
           this.domRectangleClass = null; // Only known after installation
           this.systemPlugin = Squeak.externalModules.CpSystemPlugin;
           this.updateMakeStObject();
-          this.preventDefaultEventHandling();
           this.runUpdateProcess();
           return true;
         },
@@ -11409,6 +11394,12 @@
               vm.interpretOne();
             }
           } while(process === scheduler.pointers[Squeak.ProcSched_activeProcess] && (endTime === undefined || performance.now() < endTime));
+
+          // If process did not finish in time, put it to sleep
+          if(process === scheduler.pointers[Squeak.ProcSched_activeProcess]) {
+    //console.warn("Process put to sleep because it did not finish in time: " + (process === this.transitionProcess ? "transition" : process === this.eventHandlerProcess ? "process" : "unknown"));
+            primHandler.putToSleep(process);
+          }
         },
 
         // Helper methods for answering (and setting the stack correctly)
@@ -11424,14 +11415,14 @@
         updateMakeStObject: function() {
           // Replace existing makeStObject function with more elaborate variant
           if(this.originalMakeStObject) {
-            return;	// Already installed
+            return; // Already installed
           }
           var self = this;
           self.originalMakeStObject = this.primHandler.makeStObject;
           this.primHandler.makeStObject = function(obj, proxyClass) {
             if(obj !== undefined && obj !== null) {
               // Check for DOM element
-              if(obj.tagName && obj.querySelectorAll) {
+              if(obj.querySelectorAll) {
                 return self.instanceForElement(obj);
               }
               // Check for Dictionary like element
@@ -11441,6 +11432,8 @@
             }
             return self.originalMakeStObject.call(this, obj, proxyClass);
           };
+          // Make sure document has a localName
+          document.localName = "document";
         },
         makeStAssociation: function(key, value) {
           var association = this.interpreterProxy.vm.instantiateClass(this.associationClass, 0);
@@ -11457,8 +11450,8 @@
             return self.makeStAssociation(key, obj[key]);
           });
           // Assume instVars are #tally and #array (in that order)
-          var tally = dictionary.pointers[0] = keys.length;
-          var array = dictionary.pointers[1] = this.primHandler.makeStArray(associations);
+          dictionary.pointers[0] = keys.length;
+          dictionary.pointers[1] = this.primHandler.makeStArray(associations);
           return dictionary;
         },
 
@@ -11600,8 +11593,7 @@
         },
         "primitiveDomElementDocument": function(argCount) {
           if(argCount !== 0) return false;
-          var document = window.document;
-          return this.answer(argCount, this.instanceForElement(document));
+          return this.answer(argCount, this.instanceForElement(window.document));
         },
         "primitiveDomElementElementsFromPoint:": function(argCount) {
           if(argCount !== 1) return false;
@@ -11688,6 +11680,14 @@
           if(!domElement) return false;
           var siblingElement = domElement.nextElementSibling;
           return this.answer(argCount, this.instanceForElement(siblingElement));
+        },
+        "primitiveDomElementIsDescendantOf:": function(argCount) {
+          if(argCount !== 1) return false;
+          var parentElement = this.interpreterProxy.stackValue(0).domElement;
+          if(!parentElement) return false;
+          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
+          if(!domElement) return false;
+          return this.answer(argCount, parentElement !== domElement && parentElement.contains(domElement));
         },
         "primitiveDomElementTagName": function(argCount) {
           if(argCount !== 0) return false;
@@ -11941,12 +11941,18 @@
           domElement.removeChild(childElement);
           return this.answer(argCount, childInstance);
         },
-        "primitiveDomElementUnRegisterAllInterest": function(argCount) {
+        "primitiveDomElementUnregisterAllInterest": function(argCount) {
           if(argCount !== 0) return false;
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
-          delete domElement.__cp_events;
-          delete domElement.__cp_element;
+          if(domElement.__cp_event_listeners) {
+            domElement.__cp_event_listeners.forEach(function(eventListeners, eventClass) {
+              eventListeners.forEach(function(eventListener) {
+                domElement.removeEventListener(eventClass.type, eventListener);
+              });
+            });
+            delete domElement.__cp_event_listeners;
+          }
           return this.answerSelf(argCount);
         },
         "primitiveDomElementApply:withArguments:": function(argCount) {
@@ -12252,165 +12258,6 @@
           }
         },
 
-        // Event handling
-        makeStEvent: function(eventObject) {
-
-          // Create new instance and connect original event
-          let event = eventObject.event;
-          let eventDefinition = this.eventDefinitions[event.type];
-          let newEvent = this.interpreterProxy.vm.instantiateClass(eventDefinition.eventClass, 0);
-          newEvent.event = event;
-
-          // Set event properties
-          let primHandler = this.primHandler;
-          eventDefinition.instVarNames.forEach(function(instVarName, index) {
-            let value = eventObject.specials[instVarName];
-            if(value === undefined) {
-              // Temporary fix for perfomance
-              if((instVarName === 'offsetX' || instVarName === 'offsetY') && event.buttons !== 1) {
-                value = 0;
-              } else {
-                value = event[instVarName];
-              }
-            }
-            if(value !== undefined && value !== null) {
-              newEvent.pointers[index] = primHandler.makeStObject(value);
-            }
-          });
-
-          return newEvent;
-        },
-        preventDefaultEventHandling: function() {
-          let body = window.document.body;
-
-          // Prevent default behavior for number of events
-          [
-            "contextmenu",
-            "dragstart"	// Prevent Firefox (and maybe other browsers) from doing native drag/drop
-          ].forEach(function(touchType) {
-            body.addEventListener(
-              touchType,
-              function(event) {
-                event.preventDefault();
-              }
-            );
-          });
-        },
-        findInterestedElements: function(event) {
-          let type = event.type;
-          let elements = [];
-
-          // Start searching for elements using composedPath because of shadow DOM
-          let composedPath = (event.composedPath && event.composedPath()) || [];
-          if(composedPath.length > 0) {
-            let index = 0;
-            let node = composedPath[index];
-            while(node) {
-
-              // Keep first element which is interested
-              if(node.__cp_events && node.__cp_events.has(type)) {
-                elements.push(node);
-              }
-              node = composedPath[++index];
-            }
-          } else {
-            let node = event.target;
-            while(node) {
-
-              // Keep first element which is interested
-              if(node.__cp_events && node.__cp_events.has(type)) {
-                elements.push(node);
-              }
-              node = node.parentElement;
-            }
-          }
-
-          // For mouse events, add elements which are beneath the current pointer.
-          // Browsers don't do this by default. When an HTML element is directly
-          // under the pointer, only this element and its predecessors are taken
-          // into account. If HTML elements overlap because of positioning/placement
-          // the elements beneath the top elements are out of luck. Let's show some
-          // love and add them to the party of interested elements.
-          // Check for MouseEvent using duck-typing (do NOT use pageX and pageY here
-          // since some browsers still have these properties on UIEvent, see
-          // https://docs.w3cub.com/dom/uievent/pagex).
-          if(event.offsetX !== undefined && event.offsetY !== undefined) {
-            document.elementsFromPoint(event.pageX, event.pageY).forEach(function(element) {
-              if(element.__cp_events && element.__cp_events.has(type) && !elements.includes(element)) {
-                // Find correct position within structure (leaf elements first, root element last).
-                // Find common element (towards leafs and put new element directly after it).
-                let commonElement = element.parentElement;
-                let index = -1;
-                while(commonElement && index < 0) {
-                  index = elements.indexOf(commonElement);
-                  commonElement = commonElement.parentElement;
-                }
-                if(index < 0) {
-                  elements.push(element);
-                } else {
-                  elements.splice(index, 0, element);
-                }
-              }
-            });
-          }
-
-          var thisHandle = this;
-          return elements.map(function(element) { return thisHandle.instanceForElement(element); });
-        },
-        findTarget: function(event) {
-
-          // Start searching for target using composedPath because of shadow DOM
-          let composedPath = (event.composedPath && event.composedPath()) || [];
-          if(composedPath.length > 0) {
-            return this.instanceForElement(composedPath[0]);
-          } else {
-            return this.instanceForElement(event.target);
-          }
-        },
-        addEvent: function(event) {
-
-          // Add event object with a few special properties.
-          // The modifiers property is added as a convenience to access all
-          // modifiers through a single value.
-          let eventObject = {
-            event: event,
-            specials: {
-              modifiers:
-                (event.altKey ? 1 : 0) +
-                (event.ctrlKey ? 2 : 0) +
-                (event.metaKey ? 4 : 0) +
-                (event.shiftKey ? 8 : 0),
-              // Fix 'issue' with click event because 'buttons' are not registered
-              buttons: (event.type === "click" && event.detail > 0 ? ([ 1, 4, 2, 8, 16 ][event.button] || 1) : event.buttons),
-              target: this.findTarget(event),
-              elements: this.findInterestedElements(event),
-              currentElementIndex: 1
-            }
-          };
-
-          // Add or replace last event (if same type replace events as throttling mechanism)
-          let type = event.type;
-          if(this.eventsReceived.length > 0 && this.eventsReceived[this.eventsReceived.length - 1].event.type === type && this.throttleEventTypes.includes(type)) {
-            this.eventsReceived[this.eventsReceived.length - 1] = eventObject;
-          } else {
-            this.eventsReceived.push(eventObject);
-          }
-        },
-        handleEvent: function(event) {
-
-          // Prevent the event from propagation (bubbling in this case).
-          // This will be handled in the Smalltalk code itself.
-          event.stopImmediatePropagation();
-
-          // Add the event to the collection of events to handlee
-          this.addEvent(event);
-
-          // Directly handle the available events
-          if(!this.throttleEventTypes.includes(event.type)) {
-            this.handleEvents();
-          }
-        },
-
         // Event class methods
         "primitiveEventRegisterProcess:": function(argCount) {
           if(argCount !== 1) return false;
@@ -12422,10 +12269,7 @@
           let type = this.interpreterProxy.stackValue(0).asString();
           let eventClass = this.interpreterProxy.stackValue(1);
           eventClass.type = type;
-          this.eventDefinitions[type] = {
-            eventClass: eventClass,
-            instVarNames: eventClass.allInstVarNames()
-          };
+          this.eventClassMap[type] = eventClass;
           return this.answerSelf(argCount);
         },
         "primitiveEventAddListenerTo:": function(argCount) {
@@ -12434,19 +12278,79 @@
           var element = this.interpreterProxy.stackValue(0);
           var domElement = element.domElement;
           if(!domElement) return false;
-          var eventName = receiver.type;
-          if(!domElement.__cp_events) {
-            domElement.__cp_events = new Set();
-          }
-          domElement.__cp_events.add(eventName);
-          domElement.__cp_element = element;
+          domElement.__cp_element = element; // Quick accessor for handling events faster
+
+          // Create the actual event listener
           var thisHandle = this;
-          domElement.addEventListener(eventName, function(event) {
-            if(thisHandle.preventDefaultEventTypes.includes(event.type)) {
-              event.preventDefault();
+          var eventListener = function(event) {
+            var type = event.type;
+            var currentTarget = event.currentTarget;
+
+            // Validate an event is not sent twice to same element
+            // (otherwise will results in duplicates in Smalltalk code)
+            if(event.__cp_current_target === currentTarget) {
+              // Stop here. No need to announce multiple times on same target.
+              // The Announcer in the Smalltalk code has registered multiple
+              // listeners already. So it will already perform all announcements.
+              return;
             }
-            thisHandle.handleEvent(event);
-          });
+            event.__cp_current_target = currentTarget;
+
+            // Add or replace last event (if 'same' event, replace it as throttling mechanism)
+            var shouldThrottle = thisHandle.throttleEventTypes.includes(type);
+            var eventsReceived = thisHandle.eventsReceived;
+            if(shouldThrottle) {
+              // Check the current target using the 'backup' value,
+              // because in a throttled event the actual value has become null.
+              var eventIndex = eventsReceived.findIndex(function(each) { return each.type === type && each.__cp_current_target === currentTarget; });
+              if(eventIndex >= 0) {
+                eventsReceived[eventIndex] = event;
+              } else {
+                eventsReceived.push(event);
+              }
+            } else {
+              eventsReceived.push(event);
+            }
+
+            // Directly handle the available events (if not throttling)
+            if(!shouldThrottle) {
+              thisHandle.handleEvents();
+            }
+          };
+
+          // Add the new event listener to the DOM element (to allow later removal)
+          if(!domElement.__cp_event_listeners) {
+            domElement.__cp_event_listeners = new Map();
+            domElement.__cp_event_listeners.set(receiver, [ eventListener ]);
+          } else {
+            var eventListeners = domElement.__cp_event_listeners.get(receiver);
+            if(eventListeners) {
+              eventListeners.push(eventListener);
+            } else {
+              domElement.__cp_event_listeners.set(receiver, [ eventListener ]);
+            }
+          }
+
+          // Finally add event listener to DOM element
+          domElement.addEventListener(receiver.type, eventListener);
+          return this.answerSelf(argCount);
+        },
+        "primitiveEventRemoveListenerFrom:": function(argCount) {
+          if(argCount !== 1) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var element = this.interpreterProxy.stackValue(0);
+          var domElement = element.domElement;
+          if(!domElement) return false;
+
+          // Retrieve matching event listener
+          if(domElement.__cp_event_listeners) {
+            var eventListeners = domElement.__cp_event_listeners.get(receiver);
+            if(eventListeners) {
+              // Remove last element (they are all the 'same') and ignore if not present
+              var eventListener = eventListeners.pop();
+              domElement.removeEventListener(receiver.type, eventListener);
+            }
+          }
           return this.answerSelf(argCount);
         },
         "primitiveEventIsListenedToOn:": function(argCount) {
@@ -12455,8 +12359,7 @@
           var element = this.interpreterProxy.stackValue(0);
           var domElement = element.domElement;
           if(!domElement) return false;
-          var eventName = receiver.type;
-          return this.answer(argCount, !!(domElement.__cp_events && domElement.__cp_events.has(eventName)));
+          return this.answer(argCount, !!(domElement.__cp_event_listeners && domElement.__cp_event_listeners.has(receiver)));
         },
         "primitiveEventLatestEvents": function(argCount) {
           if(argCount !== 0) return false;
@@ -12465,7 +12368,18 @@
           var thisHandle = this;
           var result = this.primHandler.makeStArray(this.eventsReceived
             .map(function(event) {
-              return thisHandle.makeStEvent(event);
+
+              // Answer pre-created event if present (when bubbling or for custom events)
+              if(event.__cp_event) {
+                return event.__cp_event;
+              }
+
+              // Create new instance and connect original event
+              let eventClass = thisHandle.eventClassMap[event.type];
+              let newEvent = thisHandle.interpreterProxy.vm.instantiateClass(eventClass, 0);
+              newEvent.event = event;
+              event.__cp_event = newEvent;
+              return newEvent;
             })
           );
           this.eventsReceived = [];
@@ -12474,13 +12388,98 @@
         },
 
         // Event instance methods
+        "primitiveEventPropertyAt:": function(argCount) {
+          if(argCount !== 1) return false;
+          var propertyName = this.interpreterProxy.stackValue(0).asString();
+          if(!propertyName) return false;
+          var event = this.interpreterProxy.stackValue(argCount).event;
+          if(!event) return false;
+          var propertyValue = event[propertyName];
+          if(!propertyValue && propertyName === "currentTarget") {
+            // Check the current target using the 'backup' value,
+            // because in a throttled event the actual value has become null.
+            propertyValue = event.__cp_current_target;
+          }
+          return this.answer(argCount, propertyValue);
+        },
+        "primitiveEventModifiers": function(argCount) {
+          if(argCount !== 0) return false;
+          var event = this.interpreterProxy.stackValue(argCount).event;
+          if(!event) return false;
+          var modifiers =
+            (event.altKey ? 1 : 0) +
+            (event.ctrlKey ? 2 : 0) +
+            (event.metaKey ? 4 : 0) +
+            (event.shiftKey ? 8 : 0)
+          ;
+          return this.answer(argCount, modifiers);
+        },
         "primitiveEventPreventDefault": function(argCount) {
           if(argCount !== 0) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount);
-          var event = receiver.event;
-          if(event) {
-            event.preventDefault();
+          var event = this.interpreterProxy.stackValue(argCount).event;
+          if(!event) return false;
+          event.preventDefault();
+          return this.answerSelf(argCount);
+        },
+        "primitiveEventStopPropagation": function(argCount) {
+          if(argCount !== 0) return false;
+          var event = this.interpreterProxy.stackValue(argCount).event;
+          if(!event) return false;
+          // Check the current target using the 'backup' value below,
+          // because in a throttled event the actual value has become null.
+          event.stopPropagation();
+          event.__cp_stop_propagation = true;
+          event.__cp_stop_after = event.__cp_current_target;
+          return this.answerSelf(argCount);
+        },
+        "primitiveEventStopImmediatePropagation": function(argCount) {
+          if(argCount !== 0) return false;
+          var event = this.interpreterProxy.stackValue(argCount).event;
+          if(!event) return false;
+          event.stopImmediatePropagation();
+          event.__cp_stop_propagation = true;
+          event.__cp_stop_after = null;
+          return this.answerSelf(argCount);
+        },
+        "primitiveEventIsStopped": function(argCount) {
+          if(argCount !== 0) return false;
+          var event = this.interpreterProxy.stackValue(argCount).event;
+          if(!event) return false;
+          // Check the current target using the 'backup' value below,
+          // because in a throttled event the actual value has become null.
+          var isStopped = false;
+          if(event.__cp_stop_propagation) {
+            if(event.__cp_stop_after === null) {
+              isStopped = true;
+            } else if(event.__cp_stop_after !== event.__cp_current_target) {
+              // Event bubbled past the currentTarget, value no longer needed
+              event.__cp_stop_after = null;
+              delete event.__cp_current_target;
+              isStopped = true;
+            }
           }
+          return this.answer(argCount, isStopped);
+        },
+
+        // CustomEvent instance methods
+        "primitiveCustomEventCreateWithDetail:": function(argCount) {
+          if(argCount !== 1) return false;
+          var detail = this.systemPlugin.asJavascriptObject(this.interpreterProxy.stackValue(0));
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          if(receiver.event) return false; // Already created!
+          var type = receiver.sqClass.type;
+          receiver.event = new CustomEvent(type, { detail: detail, bubbles: true, cancelable: true, composed: true });
+          receiver.event.__cp_event = receiver;
+          return this.answerSelf(argCount);
+        },
+        "primitiveCustomEventDispatchFrom:": function(argCount) {
+          if(argCount !== 1) return false;
+          var domElement = this.interpreterProxy.stackValue(0).domElement;
+          if(!domElement) return false;
+          var event = this.interpreterProxy.stackValue(argCount).event;
+          if(!event) return false;
+          // Dispatch event 'outside' this event handling method (to prevent stack getting out of balance)
+          window.setTimeout(function() { domElement.dispatchEvent(event); }, 0);
           return this.answerSelf(argCount);
         },
 
