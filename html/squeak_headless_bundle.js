@@ -10704,8 +10704,14 @@
           this.byteStringClass = this.interpreterProxy.vm.globalNamed("ByteString");
           this.wideStringClass = this.interpreterProxy.vm.globalNamed("WideString");
           this.arrayClass = this.interpreterProxy.vm.globalNamed("Array");
+          this.associationClass = this.interpreterProxy.vm.globalNamed("Association");
           this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
+          this.updateStringSupport();
+          this.updateMakeStObject();
+          return true;
+        },
 
+        updateStringSupport: function() {
           // Add #asString behavior to String classes (converting from Smalltalk to Javascript Strings)
           this.stringClass.classInstProto().prototype.asString = function() {
             var charChunks = [];
@@ -10735,8 +10741,43 @@
             }
             return newString;
           };
+        },
 
-          return true;
+        updateMakeStObject: function() {
+          // Replace existing makeStObject function with more elaborate variant
+          if(this.originalMakeStObject) {
+            return; // Already installed
+          }
+          var self = this;
+          self.originalMakeStObject = this.primHandler.makeStObject;
+          this.primHandler.makeStObject = function(obj, proxyClass) {
+            if(obj !== undefined && obj !== null) {
+              // Check for Dictionary like element
+              if((obj.constructor === Object && !obj.sqClass) || (obj.constructor === undefined && typeof obj === "object")) {
+                return self.makeStDictionary(obj);
+              }
+            }
+            return self.originalMakeStObject.call(this, obj, proxyClass);
+          };
+        },
+        makeStAssociation: function(key, value) {
+          var association = this.interpreterProxy.vm.instantiateClass(this.associationClass, 0);
+          // Assume instVars are #key and #value (in that order)
+          association.pointers[0] = this.primHandler.makeStObject(key);
+          association.pointers[1] = this.primHandler.makeStObject(value);
+          return association;
+        },
+        makeStDictionary: function(obj) {
+          var dictionary = this.interpreterProxy.vm.instantiateClass(this.dictionaryClass, 0);
+          var keys = Object.keys(obj);
+          var self = this;
+          var associations = keys.map(function(key) {
+            return self.makeStAssociation(key, obj[key]);
+          });
+          // Assume instVars are #tally and #array (in that order)
+          dictionary.pointers[0] = keys.length;
+          dictionary.pointers[1] = this.primHandler.makeStArray(associations);
+          return dictionary;
         },
 
         // Helper methods for answering (and setting the stack correctly)
@@ -11364,8 +11405,6 @@
           this.interpreterProxy = anInterpreter;
           this.primHandler = this.interpreterProxy.vm.primHandler;
           this.pointClass = this.interpreterProxy.vm.globalNamed("Point");
-          this.associationClass = this.interpreterProxy.vm.globalNamed("Association");
-          this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
           this.domElementClass = null; // Only known after installation
           this.domRectangleClass = null; // Only known after installation
           this.systemPlugin = Squeak.externalModules.CpSystemPlugin;
@@ -11425,34 +11464,11 @@
               if(obj.querySelectorAll) {
                 return self.instanceForElement(obj);
               }
-              // Check for Dictionary like element
-              if(obj.constructor === Object && !obj.sqClass) {
-                return self.makeStDictionary(obj);
-              }
             }
             return self.originalMakeStObject.call(this, obj, proxyClass);
           };
           // Make sure document has a localName
           document.localName = "document";
-        },
-        makeStAssociation: function(key, value) {
-          var association = this.interpreterProxy.vm.instantiateClass(this.associationClass, 0);
-          // Assume instVars are #key and #value (in that order)
-          association.pointers[0] = this.primHandler.makeStObject(key);
-          association.pointers[1] = this.primHandler.makeStObject(value);
-          return association;
-        },
-        makeStDictionary: function(obj) {
-          var dictionary = this.interpreterProxy.vm.instantiateClass(this.dictionaryClass, 0);
-          var keys = Object.keys(obj);
-          var self = this;
-          var associations = keys.map(function(key) {
-            return self.makeStAssociation(key, obj[key]);
-          });
-          // Assume instVars are #tally and #array (in that order)
-          dictionary.pointers[0] = keys.length;
-          dictionary.pointers[1] = this.primHandler.makeStArray(associations);
-          return dictionary;
         },
 
         // Helper methods for namespaces
