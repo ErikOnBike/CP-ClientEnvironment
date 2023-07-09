@@ -115,7 +115,7 @@
         // system attributes
         vmVersion: "SqueakJS 1.0.5",
         vmDate: "2022-11-19",               // Maybe replace at build time?
-        vmBuild: "unknown",                 // or replace at runtime by last-modified?
+        vmBuild: "20230709",                 // or replace at runtime by last-modified?
         vmPath: "unknown",                  // Replace at runtime
         vmFile: "vm.js",
         vmMakerVersion: "[VMMakerJS-bf.17 VMMaker-bf.353]", // for Smalltalk vmVMMakerVersion
@@ -2608,7 +2608,7 @@
             this.falseObj = this.specialObjects[Squeak.splOb_FalseObject];
             this.trueObj = this.specialObjects[Squeak.splOb_TrueObject];
             this.hasClosures = this.image.hasClosures;
-            this.globals = this.findGlobals();
+            this.getGlobals = this.globalsGetter();
             // hack for old image that does not support Unix files
             if (!this.hasClosures && !this.findMethod("UnixFileDirectory class>>pathNameDelimiter"))
                 this.primHandler.emulateMac = true;
@@ -2657,7 +2657,13 @@
             this.fetchContextRegisters(this.activeContext);
             this.reclaimableContextCount = 0;
         },
-        findGlobals: function() {
+        globalsGetter: function() {
+            // Globals (more specifically the pointers we are interested in) might
+            // change during execution, because a Dictionary needs growing for example.
+            // Therefore answer a getter function to access the actual globals (pointers).
+            // This getter can be used, even if the Dictionary has grown (and thereby the
+            // underlying Array is replaced by a larger one), because it uses the reference
+            // to the 'outer' Dictionary instead of the pointers to the values.
             var smalltalk = this.specialObjects[Squeak.splOb_SmalltalkDictionary],
                 smalltalkClass = smalltalk.sqClass.className();
             if (smalltalkClass === "Association") {
@@ -2665,17 +2671,17 @@
                 smalltalkClass = smalltalk.sqClass.className();
             }
             if (smalltalkClass === "SystemDictionary")
-                return smalltalk.pointers[1].pointers;
+                return function() { return smalltalk.pointers[1].pointers; };
             if (smalltalkClass === "SmalltalkImage") {
                 var globals = smalltalk.pointers[0],
                     globalsClass = globals.sqClass.className();
                 if (globalsClass === "SystemDictionary")
-                    return globals.pointers[1].pointers;
+                    return function() { return globals.pointers[1].pointers; };
                 if (globalsClass === "Environment")
-                    return globals.pointers[2].pointers[1].pointers
+                    return function() { return globals.pointers[2].pointers[1].pointers; };
             }
             console.warn("cannot find global dict");
-            return [];
+            return function() { return []; };
         },
         initCompiler: function() {
             if (!Squeak.Compiler)
@@ -4084,7 +4090,7 @@
         },
         allGlobalsDo: function(callback) {
             // callback(globalNameObj, globalObj), truish result breaks out of iteration
-            var globals = this.globals;
+            var globals = this.getGlobals();
             for (var i = 0; i < globals.length; i++) {
                 var assn = globals[i];
                 if (!assn.isNil) {
@@ -8406,6 +8412,9 @@
     // Run image by starting interpreter on it
     function runImage(imageData, imageName, options) {
 
+        // Show build number
+        console.log("Running SqueakJS VM (build " + Squeak.vmBuild + ")");
+
         // Create Squeak image from raw data
         var image = new Squeak.Image(imageName.replace(/\.image$/i, ""));
         image.readFromBuffer(imageData, function startRunning() {
@@ -10704,8 +10713,14 @@
           this.byteStringClass = this.interpreterProxy.vm.globalNamed("ByteString");
           this.wideStringClass = this.interpreterProxy.vm.globalNamed("WideString");
           this.arrayClass = this.interpreterProxy.vm.globalNamed("Array");
+          this.associationClass = this.interpreterProxy.vm.globalNamed("Association");
           this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
+          this.updateStringSupport();
+          this.updateMakeStObject();
+          return true;
+        },
 
+        updateStringSupport: function() {
           // Add #asString behavior to String classes (converting from Smalltalk to Javascript Strings)
           this.stringClass.classInstProto().prototype.asString = function() {
             var charChunks = [];
@@ -10735,8 +10750,43 @@
             }
             return newString;
           };
+        },
 
-          return true;
+        updateMakeStObject: function() {
+          // Replace existing makeStObject function with more elaborate variant
+          if(this.originalMakeStObject) {
+            return; // Already installed
+          }
+          var self = this;
+          self.originalMakeStObject = this.primHandler.makeStObject;
+          this.primHandler.makeStObject = function(obj, proxyClass) {
+            if(obj !== undefined && obj !== null) {
+              // Check for Dictionary like element
+              if((obj.constructor === Object && !obj.sqClass) || (obj.constructor === undefined && typeof obj === "object")) {
+                return self.makeStDictionary(obj);
+              }
+            }
+            return self.originalMakeStObject.call(this, obj, proxyClass);
+          };
+        },
+        makeStAssociation: function(key, value) {
+          var association = this.interpreterProxy.vm.instantiateClass(this.associationClass, 0);
+          // Assume instVars are #key and #value (in that order)
+          association.pointers[0] = this.primHandler.makeStObject(key);
+          association.pointers[1] = this.primHandler.makeStObject(value);
+          return association;
+        },
+        makeStDictionary: function(obj) {
+          var dictionary = this.interpreterProxy.vm.instantiateClass(this.dictionaryClass, 0);
+          var keys = Object.keys(obj);
+          var self = this;
+          var associations = keys.map(function(key) {
+            return self.makeStAssociation(key, obj[key]);
+          });
+          // Assume instVars are #tally and #array (in that order)
+          dictionary.pointers[0] = keys.length;
+          dictionary.pointers[1] = this.primHandler.makeStArray(associations);
+          return dictionary;
         },
 
         // Helper methods for answering (and setting the stack correctly)
@@ -11364,8 +11414,6 @@
           this.interpreterProxy = anInterpreter;
           this.primHandler = this.interpreterProxy.vm.primHandler;
           this.pointClass = this.interpreterProxy.vm.globalNamed("Point");
-          this.associationClass = this.interpreterProxy.vm.globalNamed("Association");
-          this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
           this.domElementClass = null; // Only known after installation
           this.domRectangleClass = null; // Only known after installation
           this.systemPlugin = Squeak.externalModules.CpSystemPlugin;
@@ -11425,34 +11473,11 @@
               if(obj.querySelectorAll) {
                 return self.instanceForElement(obj);
               }
-              // Check for Dictionary like element
-              if(obj.constructor === Object && !obj.sqClass) {
-                return self.makeStDictionary(obj);
-              }
             }
             return self.originalMakeStObject.call(this, obj, proxyClass);
           };
           // Make sure document has a localName
           document.localName = "document";
-        },
-        makeStAssociation: function(key, value) {
-          var association = this.interpreterProxy.vm.instantiateClass(this.associationClass, 0);
-          // Assume instVars are #key and #value (in that order)
-          association.pointers[0] = this.primHandler.makeStObject(key);
-          association.pointers[1] = this.primHandler.makeStObject(value);
-          return association;
-        },
-        makeStDictionary: function(obj) {
-          var dictionary = this.interpreterProxy.vm.instantiateClass(this.dictionaryClass, 0);
-          var keys = Object.keys(obj);
-          var self = this;
-          var associations = keys.map(function(key) {
-            return self.makeStAssociation(key, obj[key]);
-          });
-          // Assume instVars are #tally and #array (in that order)
-          dictionary.pointers[0] = keys.length;
-          dictionary.pointers[1] = this.primHandler.makeStArray(associations);
-          return dictionary;
         },
 
         // Helper methods for namespaces
