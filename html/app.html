@@ -20,7 +20,7 @@
     let codeFromUrl = document.location.hash.slice(1);
     if(codeFromUrl !== "") {
         window.sessionStorage.setItem("CODE", codeFromUrl);
-	history.pushState(null, "", document.location.pathname + document.location.search);
+        history.pushState(null, "", document.location.pathname + document.location.search);
     }
 
     // Set server location
