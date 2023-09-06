@@ -115,7 +115,7 @@
         // system attributes
         vmVersion: "SqueakJS 1.0.5",
         vmDate: "2022-11-19",               // Maybe replace at build time?
-        vmBuild: "20230709",                 // or replace at runtime by last-modified?
+        vmBuild: "20230906",                 // or replace at runtime by last-modified?
         vmPath: "unknown",                  // Replace at runtime
         vmFile: "vm.js",
         vmMakerVersion: "[VMMakerJS-bf.17 VMMaker-bf.353]", // for Smalltalk vmVMMakerVersion
@@ -790,7 +790,7 @@
                 if (name && name.bytes) return name.bytesAsString();
             }
             // must be meta class
-            for (var clsIndex = 5; clsIndex <= 6; clsIndex++) {
+            for (var clsIndex = 3; clsIndex <= 6; clsIndex++) {
                 var cls = this.pointers[clsIndex];
                 if (cls && cls.pointers) {
                     for (var nameIdx = 6; nameIdx <= 7; nameIdx++) {
