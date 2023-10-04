@@ -113,12 +113,13 @@
     Object.extend(Squeak,
     "version", {
         // system attributes
-        vmVersion: "SqueakJS 1.0.5",
-        vmDate: "2022-11-19",               // Maybe replace at build time?
-        vmBuild: "20230917",                 // or replace at runtime by last-modified?
+        vmVersion: "SqueakJS 1.0.6",
+        vmDate: "2023-09-30",               // Maybe replace at build time?
+        vmBuild: "20231004",                 // or replace at runtime by last-modified?
         vmPath: "unknown",                  // Replace at runtime
         vmFile: "vm.js",
         vmMakerVersion: "[VMMakerJS-bf.17 VMMaker-bf.353]", // for Smalltalk vmVMMakerVersion
+        vmInterpreterVersion: "JSInterpreter VMMaker.js-codefrau.1", // for Smalltalk interpreterVMMakerVersion
         platformName: "JS",
         platformSubtype: "unknown",         // Replace at runtime
         osVersion: "unknown",               // Replace at runtime
@@ -156,7 +157,8 @@
         splOb_ClassCharacter: 19,
         splOb_SelectorDoesNotUnderstand: 20,
         splOb_SelectorCannotReturn: 21,
-        splOb_TheInputSemaphore: 22,
+        // splOb_TheInputSemaphore: 22, // old? unused in SqueakJS
+        splOb_ProcessSignalingLowSpace: 22,
         splOb_SpecialSelectors: 23,
         splOb_CharacterTable: 24,
         splOb_SelectorMustBeBoolean: 25,
@@ -1916,6 +1918,13 @@
             this.lastOldObject.nextObject = null; // Add next object pointer as indicator this is in fact an old object
             this.oldSpaceCount += newObjects.length;
             this.gcTenured += newObjects.length;
+            // this is the only place that increases oldSpaceBytes / decreases bytesLeft
+            this.vm.signalLowSpaceIfNecessary(this.bytesLeft());
+            // TODO: keep track of newSpaceBytes and youngSpaceBytes, and signal low space if necessary
+            // basically, add obj.totalBytes() to newSpaceBytes when instantiating,
+            // trigger partial GC if newSpaceBytes + lowSpaceThreshold > totalMemory - (youngSpaceBytes + oldSpaceBytes)
+            // which would set newSpaceBytes to 0 and youngSpaceBytes to the actual survivors.
+            // for efficiency, only compute object size once per object and store? test impact on GC speed
         },
         tenureIfYoung: function(object) {
             if (object.oop < 0) {
@@ -2124,6 +2133,11 @@
                 var fromHash = fromArray[i].hash;
                 fromArray[i].hash = toArray[i].hash;
                 toArray[i].hash = fromHash;
+                // Spur class table is not part of the object memory in SqueakJS
+                // so won't be updated below, we have to update it manually
+                if (this.isSpur && this.classTable[fromHash] === fromArray[i]) {
+                    this.classTable[fromHash] = toArray[i];
+                }
             }
             // temporarily append young objects to old space
             this.lastOldObject.nextObject = firstYoungObject;
@@ -2240,22 +2254,151 @@
             return this.isSpur ? 6521 : this.hasClosures ? 6504 : 6502;
         },
         segmentVersion: function() {
-            var dnu = this.specialObjectsArray.pointers[Squeak.splOb_SelectorDoesNotUnderstand],
-                wholeWord = new Uint32Array(dnu.bytes.buffer, 0, 1);
-            return this.formatVersion() | (wholeWord[0] & 0xFF000000);
+            // a more complex version that tells both the word reversal and the endianness
+            // of the machine it came from.  Low half of word is 6502.  Top byte is top byte
+            // of #doesNotUnderstand: ($d on big-endian or $s on little-endian).
+            // In SqueakJS we write non-Spur images and segments as big-endian, Spur as little-endian
+            // (TODO: write non-Spur as little-endian too since that matches all modern platforms)
+            var dnuFirstWord = this.isSpur ? 'seod' : 'does';
+            return this.formatVersion() | (dnuFirstWord.charCodeAt(0) << 24);
+        },
+        storeImageSegment: function(segmentWordArray, outPointerArray, arrayOfRoots) {
+            // This primitive will store a binary image segment (in the same format as the Squeak image file) of the receiver and every object in its proper tree of subParts (ie, that is not refered to from anywhere else outside the tree).  Note: all elements of the receiver are treated as roots determining the extent of the tree.  All pointers from within the tree to objects outside the tree will be copied into the array of outpointers.  In their place in the image segment will be an oop equal to the offset in the outpointer array (the first would be 4). but with the high bit set.
+            // The primitive expects the array and wordArray to be more than adequately long.  In this case it returns normally, and truncates the two arrays to exactly the right size.  If either array is too small, the primitive will fail, but in no other case.
+
+            // use a DataView to access the segment as big-endian words
+            var segment = new DataView(segmentWordArray.words.buffer),
+                pos = 0, // write position in segment in bytes
+                outPointers = outPointerArray.pointers,
+                outPos = 0; // write position in outPointers in words
+
+            // write header
+            segment.setUint32(pos, this.segmentVersion()); pos += 4;
+
+            // we don't want to deal with new space objects
+            this.fullGC("storeImageSegment");
+
+            // First mark the root array and all root objects
+            arrayOfRoots.mark = true;
+            for (var i = 0; i < arrayOfRoots.pointers.length; i++)
+                if (typeof arrayOfRoots.pointers[i] === "object")
+                    arrayOfRoots.pointers[i].mark = true;
+
+            // Then do a mark pass over all objects. This will stop at our marked roots,
+            // thus leaving our segment unmarked in their shadow
+            this.markReachableObjects();
+
+            // Finally unmark the rootArray and all root objects
+            arrayOfRoots.mark = false;
+            for (var i = 0; i < arrayOfRoots.pointers.length; i++)
+                if (typeof arrayOfRoots.pointers[i] === "object")
+                    arrayOfRoots.pointers[i].mark = false;
+
+            // helpers for mapping objects to segment oops
+            var segmentOops = {}, // map from object oop to segment oop
+                todo = []; // objects that were added to the segment but still need to have their oops mapped
+
+            // if an object does not yet have a segment oop, write it to the segment or outPointers
+            function addToSegment(object) {
+                var oop = segmentOops[object.oop];
+                if (!oop) {
+                    if (object.mark) {
+                        // object is outside segment, add to outPointers
+                        if (outPos >= outPointers.length) return 0; // fail if outPointerArray is too small
+                        oop = 0x80000004 + outPos * 4;
+                        outPointers[outPos++] = object;
+                        // no need to mark outPointerArray dirty, all objects are in old space
+                    } else {
+                        // add object to segment.
+                        if (pos + object.totalBytes() > segment.byteLength) return 0; // fail if segment is too small
+                        oop = pos + (object.snapshotSize().header + 1) * 4; // addr plus extra headers + base header
+                        pos = object.writeTo(segment, pos, this);
+                        // the written oops inside the object still need to be mapped to segment oops
+                        todo.push(object);
+                    }
+                    segmentOops[object.oop] = oop;
+                }
+                return oop;
+            }
+            addToSegment = addToSegment.bind(this);
+
+            // if we have to bail out, clean up what we modified
+            function cleanUp() {
+                // unmark all objects
+                var obj = this.firstOldObject;
+                while (obj) {
+                    obj.mark = false;
+                    obj = obj.nextObject;
+                }
+                // forget weak objects collected by markReachableObjects()
+                this.weakObjects = null;
+                // return code for failure
+                return false;
+            }
+            cleanUp = cleanUp.bind(this);
+
+            // All external objects, and only they, are now marked.
+            // Write the array of roots into the segment
+            addToSegment(arrayOfRoots);
+
+            // Now fix the oops inside written objects.
+            // This will add more objects to the segment (if they are unmarked),
+            // or to outPointers (if they are marked).
+            while (todo.length > 0) {
+                var obj = todo.shift(),
+                    oop = segmentOops[obj.oop],
+                    headerSize = obj.snapshotSize().header,
+                    objBody = obj.pointers,
+                    hasClass = headerSize > 0;
+                if (hasClass) {
+                    var classOop = addToSegment(obj.sqClass);
+                    if (!classOop) return cleanUp(); // ran out of space
+                    var headerType = headerSize === 1 ? Squeak.HeaderTypeClass : Squeak.HeaderTypeSizeAndClass;
+                    segment.setUint32(oop - 8, classOop | headerType);
+                }
+                if (!objBody) continue;
+                for (var i = 0; i < objBody.length; i++) {
+                    var child = objBody[i];
+                    if (typeof child !== "object") continue;
+                    var childOop = addToSegment(child);
+                    if (!childOop) return cleanUp(); // ran out of space
+                    segment.setUint32(oop + i * 4, childOop);
+                }
+            }
+
+            // Truncate image segment and outPointerArray to actual size
+            var obj = segmentWordArray.oop < outPointerArray.oop ? segmentWordArray : outPointerArray,
+                removedBytes = 0;
+            while (obj) {
+                obj.oop -= removedBytes;
+                if (obj === segmentWordArray) {
+                    removedBytes += (obj.words.length * 4) - pos;
+                    obj.words = new Uint32Array(obj.words.buffer.slice(0, pos));
+                } else if (obj === outPointerArray) {
+                    removedBytes += (obj.pointers.length - outPos) * 4;
+                    obj.pointers.length = outPos;
+                }
+                obj = obj.nextObject;
+            }
+            this.oldSpaceBytes -= removedBytes;
+
+            // unmark all objects etc
+            cleanUp();
+
+            return true;
         },
         loadImageSegment: function(segmentWordArray, outPointerArray) {
             // The C VM creates real objects from the segment in-place.
             // We do the same, linking the new objects directly into old-space.
             // The code below is almost the same as readFromBuffer() ... should unify
-            var data = new DataView(segmentWordArray.words.buffer),
+            var segment = new DataView(segmentWordArray.words.buffer),
                 littleEndian = false,
                 nativeFloats = false,
                 pos = 0;
             var readWord = function() {
-                var int = data.getUint32(pos, littleEndian);
+                var word = segment.getUint32(pos, littleEndian);
                 pos += 4;
-                return int;
+                return word;
             };
             var readBits = function(nWords, format) {
                 if (format < 5) { // pointers (do endian conversion)
@@ -2264,7 +2407,7 @@
                         oops.push(readWord());
                     return oops;
                 } else { // words (no endian conversion yet)
-                    var bits = new Uint32Array(data.buffer, pos, nWords);
+                    var bits = new Uint32Array(segment.buffer, pos, nWords);
                     pos += nWords * 4;
                     return bits;
                 }
@@ -2286,7 +2429,7 @@
                 oopOffset = segmentWordArray.oop,
                 oopMap = {},
                 rawBits = {};
-            while (pos < data.byteLength) {
+            while (pos < segment.byteLength) {
                 var nWords = 0,
                     classInt = 0,
                     header = readWord();
@@ -2350,6 +2493,8 @@
         initSpurOverrides: function() {
             this.registerObject = this.registerObjectSpur;
             this.writeToBuffer = this.writeToBufferSpur;
+            this.storeImageSegment = this.storeImageSegmentSpur;
+            this.loadImageSegment = this.loadImageSegmentSpur;
         },
         spurClassTable: function(oopMap, rawBits, classPages, splObjs) {
             var classes = {},
@@ -2572,6 +2717,16 @@
             console.log("Wrote " + n + " objects in " + time + " ms, image size " + pos + " bytes");
             return data.buffer;
         },
+        storeImageSegmentSpur: function(segmentWordArray, outPointerArray, arrayOfRoots) {
+            // see comment in segmentVersion() if you implement this
+            // also see markReachableObjects() about immediate chars
+            this.vm.warnOnce("not implemented for Spur yet: primitive 98 (primitiveStoreImageSegment)");
+            return false;
+        },
+        loadImageSegmentSpur: function(segmentWordArray, outPointerArray) {
+            this.vm.warnOnce("not implemented for Spur yet: primitive 99 (primitiveLoadImageSegment)");
+            return null;
+        },
     });
 
     /*
@@ -2632,6 +2787,8 @@
             this.interruptCheckCounter = 0;
             this.interruptCheckCounterFeedBackReset = 1000;
             this.interruptChecksEveryNms = 3;
+            this.lowSpaceThreshold = 1000000;
+            this.signalLowSpace = false;
             this.nextPollTick = 0;
             this.nextWakeupTick = 0;
             this.lastTick = 0;
@@ -3235,10 +3392,11 @@
             }
             this.interruptCheckCounter = this.interruptCheckCounterFeedBackReset; //reset the interrupt check counter
             this.lastTick = now; //used to detect wraparound of millisecond clock
-            //  if(signalLowSpace) {
-            //            signalLowSpace= false; //reset flag
-            //            sema= getSpecialObject(Squeak.splOb_TheLowSpaceSemaphore);
-            //            if(sema != nilObj) synchronousSignal(sema); }
+            if (this.signalLowSpace) {
+                this.signalLowSpace = false; // reset flag
+                var sema = this.specialObjects[Squeak.splOb_TheLowSpaceSemaphore];
+                if (!sema.isNil) this.primHandler.synchronousSignal(sema);
+            }
             //  if(now >= nextPollTick) {
             //            ioProcessEvents(); //sets interruptPending if interrupt key pressed
             //            nextPollTick= now + 500; } //msecs to wait before next call to ioProcessEvents"
@@ -4053,6 +4211,17 @@
                 for (var i = 0; i < length; i++)
                     dest[destPos + i] = src[srcPos + i];
         },
+        signalLowSpaceIfNecessary: function(bytesLeft) {
+            if (bytesLeft < this.lowSpaceThreshold && this.lowSpaceThreshold > 0) {
+                this.signalLowSpace = true;
+                this.lowSpaceThreshold = 0;
+                var lastSavedProcess = this.specialObjects[Squeak.splOb_ProcessSignalingLowSpace];
+                if (lastSavedProcess.isNil) {
+                    this.specialObjects[Squeak.splOb_ProcessSignalingLowSpace] = this.activeProcess;
+                }
+                this.forceInterruptCheck();
+            }
+       },
     },
     'debugging', {
         addMessage: function(message) {
@@ -5327,7 +5496,7 @@
                 case 95: return this.primitiveInputWord(argCount);
                 case 96: return this.namedPrimitive('BitBltPlugin', 'primitiveCopyBits', argCount);
                 case 97: return this.primitiveSnapshot(argCount);
-                case 98: this.vm.warnOnce("missing primitive 98 (primitiveStoreImageSegment)"); return false;
+                case 98: return this.primitiveStoreImageSegment(argCount);
                 case 99: return this.primitiveLoadImageSegment(argCount);
                 case 100: return this.vm.primitivePerformWithArgs(argCount, true); // Object.perform:withArguments:inSuperclass: (Blue Book: primitiveSignalAtTick)
                 case 101: return this.primitiveBeCursor(argCount); // Cursor.beCursor
@@ -5496,6 +5665,7 @@
                 case 216: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketRemotePort', argCount);
                 case 217: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketConnectToPort', argCount);
                 case 218: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketListenOnPort', argCount);
+                    else { this.vm.warnOnce("missing primitive: 218 (tryNamedPrimitiveInForWithArgs"); return false; }
                 case 219: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketCloseConnection', argCount);
                 case 220: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketAbortConnection', argCount);
                     break;  // fail 212-220 if fell through
@@ -6590,6 +6760,16 @@
             this.vm.popN(argCount);
             return true;
         },
+        primitiveStoreImageSegment: function(argCount) {
+            var arrayOfRoots = this.stackNonInteger(2),
+                segmentWordArray = this.stackNonInteger(1),
+                outPointerArray = this.stackNonInteger(0);
+            if (!arrayOfRoots.pointers || !segmentWordArray.words || !outPointerArray.pointers) return false;
+            var success = this.vm.image.storeImageSegment(segmentWordArray, outPointerArray, arrayOfRoots);
+            if (!success) return false;
+            this.vm.popN(argCount); // return self
+            return true;
+        },
         primitiveLoadImageSegment: function(argCount) {
             var segmentWordArray = this.stackNonInteger(1),
                 outPointerArray = this.stackNonInteger(0);
@@ -7031,7 +7211,7 @@
                 case 1004: value = Squeak.vmVersion + ' ' + Squeak.vmMakerVersion; break;
                 case 1005: value = Squeak.windowSystem; break;
                 case 1006: value = Squeak.vmBuild; break;
-                case 1007: value = Squeak.vmVersion; break; // Interpreter class
+                case 1007: value = Squeak.vmInterpreterVersion; break; // Interpreter class
                 // case 1008: Cogit class
                 case 1009: value = Squeak.vmVersion + ' Date: ' + Squeak.vmDate; break; // Platform source version
                 default:
@@ -7157,6 +7337,7 @@
                 case 65: return 0;
                 // 66   the byte size of a stack page in the stack zone  (read-only; Cog VMs only)
                 // 67   the maximum allowed size of old space in bytes, 0 implies no internal limit (Spur VMs only).
+                case 67: return this.vm.image.totalMemory;
                 // 68 - 69 reserved for more Cog-related info
                 // 70   the value of VM_PROXY_MAJOR (the interpreterProxy major version number)
                 // 71   the value of VM_PROXY_MINOR (the interpreterProxy minor version number)
