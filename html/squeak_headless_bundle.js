@@ -113,9 +113,9 @@
     Object.extend(Squeak,
     "version", {
         // system attributes
-        vmVersion: "SqueakJS 1.0.6",
-        vmDate: "2023-09-30",               // Maybe replace at build time?
-        vmBuild: "20231004",                 // or replace at runtime by last-modified?
+        vmVersion: "SqueakJS 1.1.1",
+        vmDate: "2023-10-26",               // Maybe replace at build time?
+        vmBuild: "20231103",                 // or replace at runtime by last-modified?
         vmPath: "unknown",                  // Replace at runtime
         vmFile: "vm.js",
         vmMakerVersion: "[VMMakerJS-bf.17 VMMaker-bf.353]", // for Smalltalk vmVMMakerVersion
@@ -1415,7 +1415,7 @@
     },
     'initializing', {
         initialize: function(name) {
-            this.headRoom = 32000000; // TODO: pass as option
+            this.headRoom = 100000000; // TODO: pass as option
             this.totalMemory = 0;
             this.name = name;
             this.gcCount = 0;
@@ -1625,6 +1625,7 @@
             }
 
             this.totalMemory = this.oldSpaceBytes + this.headRoom;
+            this.totalMemory = Math.ceil(this.totalMemory / 1000000) * 1000000;
 
             {
                 // For debugging: re-create all objects from named prototypes
@@ -1821,6 +1822,7 @@
             this.gcCount++;
             this.gcMilliseconds += Date.now() - start;
             console.log("Full GC (" + reason + "): " + (Date.now() - start) + " ms");
+            if (reason === "primitive") console.log("  surviving objects: " + this.oldSpaceCount + " (" + this.oldSpaceBytes + " bytes)");
             return newObjects.length > 0 ? newObjects[0] : null;
         },
         gcRoots: function() {
@@ -2389,7 +2391,9 @@
         },
         loadImageSegment: function(segmentWordArray, outPointerArray) {
             // The C VM creates real objects from the segment in-place.
-            // We do the same, linking the new objects directly into old-space.
+            // We do the same, inserting the new objects directly into old-space
+            // between segmentWordArray and its following object (endMarker).
+            // This only increases oldSpaceCount but not oldSpaceBytes.
             // The code below is almost the same as readFromBuffer() ... should unify
             var segment = new DataView(segmentWordArray.words.buffer),
                 littleEndian = false,
@@ -4213,13 +4217,22 @@
         },
         signalLowSpaceIfNecessary: function(bytesLeft) {
             if (bytesLeft < this.lowSpaceThreshold && this.lowSpaceThreshold > 0) {
-                this.signalLowSpace = true;
-                this.lowSpaceThreshold = 0;
-                var lastSavedProcess = this.specialObjects[Squeak.splOb_ProcessSignalingLowSpace];
-                if (lastSavedProcess.isNil) {
-                    this.specialObjects[Squeak.splOb_ProcessSignalingLowSpace] = this.activeProcess;
+                var increase = prompt && prompt("Out of memory, " + Math.ceil(this.image.totalMemory/1000000)
+                    + " MB used.\nEnter additional MB, or 0 to signal low space in image", "0");
+                if (increase) {
+                    var bytes = parseInt(increase, 10) * 1000000;
+                    this.image.totalMemory += bytes;
+                    this.signalLowSpaceIfNecessary(this.image.bytesLeft());
+                } else {
+                    console.warn("squeak: low memory (" + bytesLeft + "/" + this.image.totalMemory + " bytes left), signaling low space");
+                    this.signalLowSpace = true;
+                    this.lowSpaceThreshold = 0;
+                    var lastSavedProcess = this.specialObjects[Squeak.splOb_ProcessSignalingLowSpace];
+                    if (lastSavedProcess.isNil) {
+                        this.specialObjects[Squeak.splOb_ProcessSignalingLowSpace] = this.primHandler.activeProcess();
+                    }
+                    this.forceInterruptCheck();
                 }
-                this.forceInterruptCheck();
             }
        },
     },
@@ -4368,16 +4381,16 @@
             this.breakOnContextChanged = true;
             this.breakOnContextReturned = null;
         },
-        printActiveContext: function(maxWidth) {
+        printContext: function(ctx, maxWidth) {
+            if (!this.isContext(ctx)) return "NOT A CONTEXT: " + printObj(ctx);
             if (!maxWidth) maxWidth = 72;
             function printObj(obj) {
-                var value = obj.sqInstName ? obj.sqInstName() : obj.toString();
+                var value = typeof obj === 'number' || typeof obj === 'object' ? obj.sqInstName() : "<" + obj + ">";
                 value = JSON.stringify(value).slice(1, -1);
                 if (value.length > maxWidth - 3) value = value.slice(0, maxWidth - 3) + '...';
                 return value;
             }
             // temps and stack in current context
-            var ctx = this.activeContext;
             var isBlock = typeof ctx.pointers[Squeak.BlockContext_argumentCount] === 'number';
             var closure = ctx.pointers[Squeak.Context_closure];
             var isClosure = !isBlock && !closure.isNil;
@@ -4399,10 +4412,11 @@
             }
             if (isBlock) {
                 stack += '\n';
-                var nArgs = ctx.pointers[3];
+                var nArgs = ctx.pointers[Squeak.BlockContext_argumentCount];
                 var firstArg = this.decodeSqueakSP(1);
                 var lastArg = firstArg + nArgs;
-                for (var i = firstArg; i <= this.sp; i++) {
+                var sp = ctx === this.activeContext ? this.sp : ctx.pointers[Squeak.Context_stackPointer];
+                for (var i = firstArg; i <= sp; i++) {
                     var value = printObj(ctx.pointers[i]);
                     var label = '';
                     if (i <= lastArg) label = '=arg' + (i - firstArg);
@@ -4410,6 +4424,9 @@
                 }
             }
             return stack;
+        },
+        printActiveContext: function(maxWidth) {
+            return this.printContext(this.activeContext, maxWidth);
         },
         printAllProcesses: function() {
             var schedAssn = this.specialObjects[Squeak.splOb_SchedulerAssociation],
@@ -4442,8 +4459,9 @@
         printProcess: function(process, active) {
             var context = process.pointers[Squeak.Proc_suspendedContext],
                 priority = process.pointers[Squeak.Proc_priority],
-                stack = this.printStack(active ? null : context);
-            return process.toString() +" at priority " + priority + "\n" + stack;
+                stack = this.printStack(active ? null : context),
+                values = this.printContext(context);
+            return process.toString() +" at priority " + priority + "\n" + stack + values + "\n";
         },
         printByteCodes: function(aMethod, optionalIndent, optionalHighlight, optionalPC) {
             if (!aMethod) aMethod = this.method;
@@ -5592,7 +5610,10 @@
                 case 174: if (this.oldPrims) return this.namedPrimitive('SoundPlugin', 'primitiveSoundPlaySamples', argCount);
                     else return this.popNandPushIfOK(argCount+1, this.objectAtPut(false,false,true)); // slotAt:put:
                 case 175: if (this.oldPrims) return this.namedPrimitive('SoundPlugin', 'primitiveSoundPlaySilence', argCount);
-                    else return this.popNandPushIfOK(argCount+1, this.behaviorHash(this.stackNonInteger(0)));
+                    else if (!this.vm.image.isSpur) {
+                        this.vm.warnOnce("primitive 175 called in non-spur image"); // workaround for Cuis
+                        return this.popNandPushIfOK(argCount+1, this.identityHash(this.stackNonInteger(0)));
+                    } else return this.popNandPushIfOK(argCount+1, this.behaviorHash(this.stackNonInteger(0)));
                 case 176: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primWaveTableSoundmixSampleCountintostartingAtpan', argCount);
                     else return this.popNandPushIfOK(argCount+1, this.vm.image.isSpur ? 0x3FFFFF : 0xFFF); // primitiveMaxIdentityHash
                 case 177: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primFMSoundmixSampleCountintostartingAtpan', argCount);
@@ -5610,7 +5631,7 @@
                 case 183: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primitiveApplyReverb', argCount);
                     break;  // fail
                 case 184: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primitiveMixLoopedSampledSound', argCount);
-                    break; // fail
+                    else return this.popNandPushIfOK(argCount+1, this.vm.trueObj); // pin
                 case 185: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primitiveMixSampledSound', argCount);
                     else return this.primitiveExitCriticalSection(argCount);
                 case 186: if (this.oldPrims) break; // unused
@@ -6440,7 +6461,7 @@
             if (indexableSize * 4 > this.vm.image.bytesLeft()) {
                 // we're not really out of memory, we have no idea how much memory is available
                 // but we need to stop runaway allocations
-                console.warn("squeak: out of memory");
+                console.warn("squeak: out of memory, failing allocation");
                 this.success = false;
                 this.vm.primFailCode = Squeak.PrimErrNoMemory;
                 return null;
@@ -11456,7 +11477,7 @@
         },
         "primitiveEnvironmentReload": function(argCount) {
           if(argCount !== 0) return false;
-          document.location.reload(true);
+          window.document.location.reload(true);
           return this.answerSelf(argCount);
         },
 
@@ -11669,7 +11690,7 @@
             return self.originalMakeStObject.call(this, obj, proxyClass);
           };
           // Make sure document has a localName
-          document.localName = "document";
+          window.document.localName = "document";
         },
 
         // Helper methods for namespaces
@@ -11806,6 +11827,13 @@
             window.document.createElement(tagName) :
             window.document.createElementNS(namespace.uri, tagName)
           ;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          if(tagName === receiver.customTag) {
+            // Register if WebComponent is created from code (vs being created from markup content).
+            // This information is used in the WebComponent constructor to allow correct initialization
+            // of all WebComponents.
+            element.__cp_created_from_code = true;
+          }
           return this.answer(argCount, this.instanceForElement(element));
         },
         "primitiveDomElementDocument": function(argCount) {
@@ -12285,7 +12313,7 @@
         // TemplateComponent helper methods
         ensureShadowRoot: function(elementClass, domElement) {
 
-          // Attach shadow DOM (if not already presnet) and copy template (if available)
+          // Attach shadow DOM (if not already present) and copy template (if available)
           if(!domElement.shadowRoot) {
             var shadowRoot = domElement.attachShadow({ mode: "open" });
             if(elementClass.templateElement) {
@@ -12310,6 +12338,23 @@
               constructor() {
                 super();
                 thisHandle.ensureShadowRoot(receiver, this);
+
+                // Since a WebComponent can be created both from code as well as from
+                // markup content, we need to inform the Smalltalk code of the later
+                // situation. In this way the Smalltalk #initialize message can be send
+                // to the new instance (in all situations).
+                // Use the fact that setTimeout will run code after current execution
+                // has finished. This means the regular instantiation code has finished
+                // (in the situation it was called from code).
+                var instance = this;
+                window.setTimeout(function() {
+                  // If component is NOT created by code, dispatch event to allow Smalltalk
+                  // code to do the initialization after all.
+                  if(!instance.__cp_created_from_code) {
+                    var requestInitEvent = new CustomEvent("createdfrommarkup", { detail: thisHandle.instanceForElement(instance) });
+                    window.document.dispatchEvent(requestInitEvent);
+                  }
+                }, 0);
               }
             };
 
