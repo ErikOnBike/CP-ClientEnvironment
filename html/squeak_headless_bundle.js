@@ -11068,8 +11068,9 @@
             window.global = window;
           }
 
-          // Create global function to let objects answer themselves (used for Proxy-ing JavaScript objects)
-          Object.prototype.yourself = function() { return this; };
+          // Create global function to let objects 'identify' themselves (used for Proxy-ing JavaScript objects).
+          // For undefined or null, answer the global object itself.
+          global.identity = function(x) { return x === undefined || x === null ? global : x; };
         },
 
         // Helper method for running a process uninterrupted
