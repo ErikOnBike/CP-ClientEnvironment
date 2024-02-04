@@ -63,7 +63,10 @@
         Function.prototype.subclass = function(classPath /* + more args */ ) {
             // create subclass
             var subclass = function() {
-                if (this.initialize) this.initialize.apply(this, arguments);
+                if (this.initialize) {
+                    var result = this.initialize.apply(this, arguments);
+                    if (result !== undefined) return result;
+                }
                 return this;
             };
             // set up prototype
@@ -113,9 +116,9 @@
     Object.extend(Squeak,
     "version", {
         // system attributes
-        vmVersion: "SqueakJS 1.1.1",
-        vmDate: "2023-10-26",               // Maybe replace at build time?
-        vmBuild: "20231103",                 // or replace at runtime by last-modified?
+        vmVersion: "SqueakJS 1.1.2",
+        vmDate: "2024-01-28",               // Maybe replace at build time?
+        vmBuild: "20240204",                 // or replace at runtime by last-modified?
         vmPath: "unknown",                  // Replace at runtime
         vmFile: "vm.js",
         vmMakerVersion: "[VMMakerJS-bf.17 VMMaker-bf.353]", // for Smalltalk vmVMMakerVersion
@@ -1811,6 +1814,9 @@
             // sorting them by id, and then linking them into old space.
             this.vm.addMessage("fullGC: " + reason);
             var start = Date.now();
+            var previousNew = this.newSpaceCount;
+            var previousYoung = this.youngSpaceCount;
+            var previousOld = this.oldSpaceCount;
             var newObjects = this.markReachableObjects();
             this.removeUnmarkedOldObjects();
             this.appendToOldObjects(newObjects);
@@ -1821,8 +1827,12 @@
             this.hasNewInstances = {};
             this.gcCount++;
             this.gcMilliseconds += Date.now() - start;
-            console.log("Full GC (" + reason + "): " + (Date.now() - start) + " ms");
-            if (reason === "primitive") console.log("  surviving objects: " + this.oldSpaceCount + " (" + this.oldSpaceBytes + " bytes)");
+            var delta = previousOld - this.oldSpaceCount;
+            console.log("Full GC (" + reason + "): " + (Date.now() - start) + " ms, " +
+                "surviving objects: " + this.oldSpaceCount + " (" + this.oldSpaceBytes + " bytes), " +
+                "tenured " + newObjects.length + " (total " + (delta > 0 ? "+" : "") + delta + "), " +
+                "gc'ed " + previousYoung + " young and " + (previousNew - previousYoung) + " new objects");
+
             return newObjects.length > 0 ? newObjects[0] : null;
         },
         gcRoots: function() {
@@ -1971,6 +1981,7 @@
             // and finalize weak refs
             this.vm.addMessage("partialGC: " + reason);
             var start = Date.now();
+            var previous = this.newSpaceCount;
             var young = this.findYoungObjects();
             this.appendToYoungSpace(young);
             this.finalizeWeakReferences();
@@ -1980,7 +1991,9 @@
             this.newSpaceCount = this.youngSpaceCount;
             this.pgcCount++;
             this.pgcMilliseconds += Date.now() - start;
-            console.log("Partial GC (" + reason+ "): " + (Date.now() - start) + " ms");
+            console.log("Partial GC (" + reason+ "): " + (Date.now() - start) + " ms, " +
+                "found " + this.youngRootsCount + " roots in " + this.oldSpaceCount + " old, " +
+                "kept " + this.youngSpaceCount + " young (" + (previous - this.youngSpaceCount) + " gc'ed)");
             return young[0];
         },
         youngRoots: function() {
@@ -2009,6 +2022,7 @@
             // PartialGC: find new objects transitively reachable from old objects
             var todo = this.youngRoots(),     // direct pointers from old space
                 newObjects = [];
+            this.youngRootsCount = todo.length;
             this.weakObjects = [];
             while (todo.length > 0) {
                 var object = todo.pop();
@@ -2758,7 +2772,7 @@
     Object.subclass('Squeak.Interpreter',
     'initialization', {
         initialize: function(image, display) {
-            console.log('squeak: initializing interpreter ' + Squeak.vmVersion);
+            console.log('squeak: initializing interpreter ' + Squeak.vmVersion + ' (' + Squeak.vmDate + ')');
             this.Squeak = Squeak;   // store locally to avoid dynamic lookup in Lively
             this.image = image;
             this.image.vm = this;
@@ -2814,6 +2828,7 @@
             this.breakOutTick = 0;
             this.breakOnMethod = null; // method to break on
             this.breakOnNewMethod = false;
+            this.breakOnMessageNotUnderstood = false;
             this.breakOnContextChanged = false;
             this.breakOnContextReturned = null; // context to break on
             this.messages = {};
@@ -2871,9 +2886,13 @@
             // compiler might decide to not handle current image
             try {
                 console.log("squeak: initializing JIT compiler");
-                this.compiler = new Squeak.Compiler(this);
+                var compiler = new Squeak.Compiler(this);
+                if (compiler.compile) this.compiler = compiler;
             } catch(e) {
-                console.warn("Compiler " + e);
+                console.warn("Compiler: " + e);
+            }
+            if (!this.compiler) {
+                console.warn("SqueakJS will be running in interpreter mode only (slow)");
             }
         },
         hackImage: function() {
@@ -2902,7 +2921,7 @@
                         else if (byte && m.bytes[byte.pc] === byte.hack) hacked = false; // already there
                         else if (lit && m.pointers[lit.index].pointers[1] === lit.old) m.pointers[lit.index].pointers[1] = lit.hack;
                         else if (lit && m.pointers[lit.index].pointers[1] === lit.hack) hacked = false; // already there
-                        else { hacked = false; console.error("Failed to hack " + each.method); }
+                        else { hacked = false; console.warn("Not hacking " + each.method); }
                         if (hacked) console.warn("Hacking " + each.method);
                     }
                 } catch (error) {
@@ -3315,7 +3334,7 @@
             if (this.frozen) return 'frozen';
             this.isIdle = false;
             this.breakOutOfInterpreter = false;
-            this.breakOutTick = this.primHandler.millisecondClockValue() + (forMilliseconds || 500);
+            this.breakAfter(forMilliseconds || 500);
             while (this.breakOutOfInterpreter === false)
                 if (this.method.compiled) {
                     this.method.compiled(this);
@@ -3683,6 +3702,10 @@
             if (selector === dnuSel) // Cannot find #doesNotUnderstand: -- unrecoverable error.
                 throw Error("Recursive not understood error encountered");
             var dnuMsg = this.createActualMessage(selector, argCount, startingClass); //The argument to doesNotUnderstand:
+            if (this.breakOnMessageNotUnderstood) {
+                var receiver = this.stackValue(argCount);
+                this.breakNow("Message not understood: " + receiver + " " + startingClass.className() + ">>" + selector.bytesAsString());
+            }
             this.popNandPush(argCount, dnuMsg);
             return this.findSelectorInClass(dnuSel, 1, startingClass);
         },
@@ -3710,7 +3733,13 @@
         executeNewMethod: function(newRcvr, newMethod, argumentCount, primitiveIndex, optClass, optSel) {
             this.sendCount++;
             if (newMethod === this.breakOnMethod) this.breakNow("executing method " + this.printMethod(newMethod, optClass, optSel));
-            if (this.logSends) console.log(this.sendCount + ' ' + this.printMethod(newMethod, optClass, optSel));
+            if (this.logSends) {
+                var indent = ' ';
+                var ctx = this.activeContext;
+                while (!ctx.isNil) { indent += '| '; ctx = ctx.pointers[Squeak.Context_sender]; }
+                var args = this.activeContext.pointers.slice(this.sp + 1 - argumentCount, this.sp + 1);
+                console.log(this.sendCount + indent + this.printMethod(newMethod, optClass, optSel, args));
+            }
             if (this.breakOnContextChanged) {
                 this.breakOnContextChanged = false;
                 this.breakNow();
@@ -4241,18 +4270,32 @@
             return this.messages[message] ? ++this.messages[message] : this.messages[message] = 1;
         },
         warnOnce: function(message, what) {
-            if (this.addMessage(message) == 1)
+            if (this.addMessage(message) == 1) {
                 console[what || "warn"](message);
+                return true;
+            }
         },
-        printMethod: function(aMethod, optContext, optSel) {
+        printMethod: function(aMethod, optContext, optSel, optArgs) {
             // return a 'class>>selector' description for the method
             if (aMethod.sqClass != this.specialObjects[Squeak.splOb_ClassCompiledMethod]) {
-              return this.printMethod(aMethod.blockOuterCode(), optContext, optSel)
+              return this.printMethod(aMethod.blockOuterCode(), optContext, optSel, optArgs)
             }
-            if (optSel) return optContext.className() + '>>' + optSel.bytesAsString();
+            var found;
+            if (optSel) {
+                var printed = optContext.className() + '>>';
+                var selector = optSel.bytesAsString();
+                if (!optArgs || !optArgs.length) printed += selector;
+                else {
+                    var parts = selector.split(/(?<=:)/); // keywords
+                    for (var i = 0; i < optArgs.length; i++) {
+                        if (i > 0) printed += ' ';
+                        printed += parts[i] + ' ' + optArgs[i];
+                    }
+                }
+                return printed;
+            }
             // this is expensive, we have to search all classes
             if (!aMethod) aMethod = this.activeContext.contextMethod();
-            var found;
             this.allMethodsDo(function(classObj, methodObj, selectorObj) {
                 if (methodObj === aMethod)
                     return found = classObj.className() + '>>' + selectorObj.bytesAsString();
@@ -4316,7 +4359,7 @@
                 }
             });
         },
-        printStack: function(ctx, limit) {
+        printStack: function(ctx, limit, indent) {
             // both args are optional
             if (typeof ctx == "number") {limit = ctx; ctx = null;}
             if (!ctx) ctx = this.activeContext;
@@ -4333,7 +4376,9 @@
                 contexts = contexts.slice(0, limit).concat(['...']).concat(contexts.slice(-extra));
             }
             var stack = [],
-                i = contexts.length;
+                i = contexts.length,
+                indents = '';
+            if (indent && this.logSends) indents = Array((""+this.sendCount).length + 2).join(' ');
             while (i-- > 0) {
                 var ctx = contexts[i];
                 if (!ctx.pointers) {
@@ -4347,7 +4392,10 @@
                     } else if (!ctx.pointers[Squeak.Context_closure].isNil) {
                         block = '[] in '; // it's a closure activation
                     }
-                    stack.push(block + this.printMethod(method, ctx) + '\n');
+                    var line = block + this.printMethod(method, ctx);
+                    if (indent) line = indents + line;
+                    stack.push(line + '\n');
+                    if (indent) indents += indent;
                 }
             }
             return stack.join('');
@@ -4364,6 +4412,9 @@
                         return found = methodObj;
             });
             return found;
+        },
+        breakAfter: function(ms) {
+            this.breakOutTick = this.primHandler.millisecondClockValue() + ms;
         },
         breakNow: function(msg) {
             if (msg) console.log("Break: " + msg);
@@ -4402,12 +4453,17 @@
             var stackTop = homeCtx.contextSizeWithStack(this) - 1;
             var firstTemp = stackBottom + 1;
             var lastTemp = firstTemp + tempCount - 1;
+            var lastArg = firstTemp + homeCtx.pointers[Squeak.Context_method].methodNumArgs() - 1;
             var stack = '';
             for (var i = stackBottom; i <= stackTop; i++) {
                 var value = printObj(homeCtx.pointers[i]);
                 var label = '';
-                if (i == stackBottom) label = '=rcvr'; else
-                if (i <= lastTemp) label = '=tmp' + (i - firstTemp);
+                if (i === stackBottom) {
+                    label = '=rcvr';
+                } else {
+                    if (i <= lastTemp) label = '=tmp' + (i - firstTemp);
+                    if (i <= lastArg) label += '/arg' + (i - firstTemp);
+                }
                 stack += '\nctx[' + i + ']' + label +': ' + value;
             }
             if (isBlock) {
@@ -4416,10 +4472,11 @@
                 var firstArg = this.decodeSqueakSP(1);
                 var lastArg = firstArg + nArgs;
                 var sp = ctx === this.activeContext ? this.sp : ctx.pointers[Squeak.Context_stackPointer];
+                if (sp < firstArg) stack += '\nblk <stack empty>';
                 for (var i = firstArg; i <= sp; i++) {
                     var value = printObj(ctx.pointers[i]);
                     var label = '';
-                    if (i <= lastArg) label = '=arg' + (i - firstArg);
+                    if (i < lastArg) label = '=arg' + (i - firstArg);
                     stack += '\nblk[' + i + ']' + label +': ' + value;
                 }
             }
@@ -4434,39 +4491,62 @@
             // print active process
             var activeProc = sched.pointers[Squeak.ProcSched_activeProcess],
                 result = "Active: " + this.printProcess(activeProc, true);
-            // print other runnable processes
+            // print other runnable processes in order of priority
             var lists = sched.pointers[Squeak.ProcSched_processLists].pointers;
             for (var priority = lists.length - 1; priority >= 0; priority--) {
                 var process = lists[priority].pointers[Squeak.LinkedList_firstLink];
                 while (!process.isNil) {
+                    result += "\n------------------------------------------";
                     result += "\nRunnable: " + this.printProcess(process);
                     process = process.pointers[Squeak.Link_nextLink];
                 }
             }
-            // print all processes waiting on a semaphore
+            // print all processes waiting on a semaphore in order of priority
             var semaClass = this.specialObjects[Squeak.splOb_ClassSemaphore],
-                sema = this.image.someInstanceOf(semaClass);
+                sema = this.image.someInstanceOf(semaClass),
+                waiting = [];
             while (sema) {
                 var process = sema.pointers[Squeak.LinkedList_firstLink];
                 while (!process.isNil) {
-                    result += "\nWaiting: " + this.printProcess(process);
+                    waiting.push(process);
                     process = process.pointers[Squeak.Link_nextLink];
                 }
                 sema = this.image.nextInstanceAfter(sema);
             }
+            waiting.sort(function(a, b){
+                return b.pointers[Squeak.Proc_priority] - a.pointers[Squeak.Proc_priority];
+            });
+            for (var i = 0; i < waiting.length; i++) {
+                result += "\n------------------------------------------";
+                result += "\nWaiting: " + this.printProcess(waiting[i]);
+            }
             return result;
         },
-        printProcess: function(process, active) {
-            var context = process.pointers[Squeak.Proc_suspendedContext],
+        printProcess: function(process, active, indent) {
+            if (!process) {
+                var schedAssn = this.specialObjects[Squeak.splOb_SchedulerAssociation],
+                sched = schedAssn.pointers[Squeak.Assn_value];
+                process = sched.pointers[Squeak.ProcSched_activeProcess],
+                active = true;
+            }
+            var context = active ? this.activeContext : process.pointers[Squeak.Proc_suspendedContext],
                 priority = process.pointers[Squeak.Proc_priority],
-                stack = this.printStack(active ? null : context),
-                values = this.printContext(context);
-            return process.toString() +" at priority " + priority + "\n" + stack + values + "\n";
+                stack = this.printStack(context, 20, indent),
+                values = indent && this.logSends ? "" : this.printContext(context) + "\n";
+            return process.toString() +" at priority " + priority + "\n" + stack + values;
         },
         printByteCodes: function(aMethod, optionalIndent, optionalHighlight, optionalPC) {
             if (!aMethod) aMethod = this.method;
             var printer = new Squeak.InstructionPrinter(aMethod, this);
             return printer.printInstructions(optionalIndent, optionalHighlight, optionalPC);
+        },
+        logStack: function() {
+            // useful for debugging interactively:
+            // SqueakJS.vm.logStack()
+            console.log(this.printStack()
+                + this.printActiveContext() + '\n\n'
+                + this.printByteCodes(this.method, '   ', '=> ', this.pc),
+                this.activeContext.pointers.slice(0, this.sp + 1));
         },
         willSendOrReturn: function() {
             // Answer whether the next bytecode corresponds to a Smalltalk
@@ -4564,7 +4644,7 @@
     Object.subclass('Squeak.InterpreterProxy',
     // provides function names exactly like the C interpreter, for ease of porting
     // but maybe less efficiently because of the indirection
-    // only used for plugins translated from Slang (see plugins/*.js)
+    // mostly used for plugins translated from Slang (see plugins/*.js)
     // built-in primitives use the interpreter directly
     'initialization', {
         VM_PROXY_MAJOR: 1,
@@ -4807,6 +4887,9 @@
         classString: function() {
             return this.vm.specialObjects[Squeak.splOb_ClassString];
         },
+        classByteArray: function() {
+            return this.vm.specialObjects[Squeak.splOb_ClassByteArray];
+        },
         nilObject: function() {
             return this.vm.nilObj;
         },
@@ -4819,6 +4902,9 @@
     },
     'vm functions',
     {
+        clone: function(object) {
+            return this.vm.image.clone(object);
+        },
         instantiateClassindexableSize: function(aClass, indexableSize) {
             return this.vm.instantiateClass(aClass, indexableSize);
         },
@@ -5393,7 +5479,7 @@
                 //case 0x3: return false; // next
                 //case 0x4: return false; // nextPut:
                 //case 0x5: return false; // atEnd
-                case 0x6: return this.pop2andPushBoolIfOK(this.vm.stackValue(1) === this.vm.stackValue(0)); // ==
+                case 0x6: return this.popNandPushBoolIfOK(2, this.vm.stackValue(1) === this.vm.stackValue(0)); // ==
                 case 0x7: return this.popNandPushIfOK(1,this.vm.getClass(this.vm.top())); // class
                 case 0x8: return this.popNandPushIfOK(2,this.doBlockCopy()); // blockCopy:
                 case 0x9: return this.primitiveBlockValue(0); // value
@@ -5410,23 +5496,23 @@
             this.success = true;
             switch (index) {
                 // Integer Primitives (0-19)
-                case 1: return this.popNandPushIntIfOK(2,this.stackInteger(1) + this.stackInteger(0));  // Integer.add
-                case 2: return this.popNandPushIntIfOK(2,this.stackInteger(1) - this.stackInteger(0));  // Integer.subtract
-                case 3: return this.pop2andPushBoolIfOK(this.stackInteger(1) < this.stackInteger(0));   // Integer.less
-                case 4: return this.pop2andPushBoolIfOK(this.stackInteger(1) > this.stackInteger(0));   // Integer.greater
-                case 5: return this.pop2andPushBoolIfOK(this.stackInteger(1) <= this.stackInteger(0));  // Integer.leq
-                case 6: return this.pop2andPushBoolIfOK(this.stackInteger(1) >= this.stackInteger(0));  // Integer.geq
-                case 7: return this.pop2andPushBoolIfOK(this.stackInteger(1) === this.stackInteger(0)); // Integer.equal
-                case 8: return this.pop2andPushBoolIfOK(this.stackInteger(1) !== this.stackInteger(0)); // Integer.notequal
-                case 9: return this.popNandPushIntIfOK(2,this.stackInteger(1) * this.stackInteger(0));  // Integer.multiply *
-                case 10: return this.popNandPushIntIfOK(2,this.vm.quickDivide(this.stackInteger(1),this.stackInteger(0)));  // Integer.divide /  (fails unless exact)
-                case 11: return this.popNandPushIntIfOK(2,this.vm.mod(this.stackInteger(1),this.stackInteger(0)));  // Integer.mod \\
-                case 12: return this.popNandPushIntIfOK(2,this.vm.div(this.stackInteger(1),this.stackInteger(0)));  // Integer.div //
-                case 13: return this.popNandPushIntIfOK(2,this.stackInteger(1) / this.stackInteger(0) | 0);  // Integer.quo
-                case 14: return this.popNandPushIfOK(2,this.doBitAnd());  // SmallInt.bitAnd
-                case 15: return this.popNandPushIfOK(2,this.doBitOr());  // SmallInt.bitOr
-                case 16: return this.popNandPushIfOK(2,this.doBitXor());  // SmallInt.bitXor
-                case 17: return this.popNandPushIfOK(2,this.doBitShift());  // SmallInt.bitShift
+                case 1: return this.popNandPushIntIfOK(argCount+1,this.stackInteger(1) + this.stackInteger(0));  // Integer.add
+                case 2: return this.popNandPushIntIfOK(argCount+1,this.stackInteger(1) - this.stackInteger(0));  // Integer.subtract
+                case 3: return this.popNandPushBoolIfOK(argCount+1, this.stackInteger(1) < this.stackInteger(0));   // Integer.less
+                case 4: return this.popNandPushBoolIfOK(argCount+1, this.stackInteger(1) > this.stackInteger(0));   // Integer.greater
+                case 5: return this.popNandPushBoolIfOK(argCount+1, this.stackInteger(1) <= this.stackInteger(0));  // Integer.leq
+                case 6: return this.popNandPushBoolIfOK(argCount+1, this.stackInteger(1) >= this.stackInteger(0));  // Integer.geq
+                case 7: return this.popNandPushBoolIfOK(argCount+1, this.stackInteger(1) === this.stackInteger(0)); // Integer.equal
+                case 8: return this.popNandPushBoolIfOK(argCount+1, this.stackInteger(1) !== this.stackInteger(0)); // Integer.notequal
+                case 9: return this.popNandPushIntIfOK(argCount+1,this.stackInteger(1) * this.stackInteger(0));  // Integer.multiply *
+                case 10: return this.popNandPushIntIfOK(argCount+1,this.vm.quickDivide(this.stackInteger(1),this.stackInteger(0)));  // Integer.divide /  (fails unless exact)
+                case 11: return this.popNandPushIntIfOK(argCount+1,this.vm.mod(this.stackInteger(1),this.stackInteger(0)));  // Integer.mod \\
+                case 12: return this.popNandPushIntIfOK(argCount+1,this.vm.div(this.stackInteger(1),this.stackInteger(0)));  // Integer.div //
+                case 13: return this.popNandPushIntIfOK(argCount+1,this.stackInteger(1) / this.stackInteger(0) | 0);  // Integer.quo
+                case 14: return this.popNandPushIfOK(argCount+1,this.doBitAnd());  // SmallInt.bitAnd
+                case 15: return this.popNandPushIfOK(argCount+1,this.doBitOr());  // SmallInt.bitOr
+                case 16: return this.popNandPushIfOK(argCount+1,this.doBitXor());  // SmallInt.bitXor
+                case 17: return this.popNandPushIfOK(argCount+1,this.doBitShift());  // SmallInt.bitShift
                 case 18: return this.primitiveMakePoint(argCount, false);
                 case 19: return false;                                 // Guard primitive for simulation -- *must* fail
                 // LargeInteger Primitives (20-39)
@@ -5434,12 +5520,12 @@
                 case 20: this.vm.warnOnce("missing primitive: 20 (primitiveRemLargeIntegers)"); return false;
                 case 21: this.vm.warnOnce("missing primitive: 21 (primitiveAddLargeIntegers)"); return false;
                 case 22: this.vm.warnOnce("missing primitive: 22 (primitiveSubtractLargeIntegers)"); return false;
-                case 23: return this.primitiveLessThanLargeIntegers();
-                case 24: return this.primitiveGreaterThanLargeIntegers();
-                case 25: return this.primitiveLessOrEqualLargeIntegers();
-                case 26: return this.primitiveGreaterOrEqualLargeIntegers();
-                case 27: return this.primitiveEqualLargeIntegers();
-                case 28: return this.primitiveNotEqualLargeIntegers();
+                case 23: return this.primitiveLessThanLargeIntegers(argCount);
+                case 24: return this.primitiveGreaterThanLargeIntegers(argCount);
+                case 25: return this.primitiveLessOrEqualLargeIntegers(argCount);
+                case 26: return this.primitiveGreaterOrEqualLargeIntegers(argCount);
+                case 27: return this.primitiveEqualLargeIntegers(argCount);
+                case 28: return this.primitiveNotEqualLargeIntegers(argCount);
                 case 29: this.vm.warnOnce("missing primitive: 29 (primitiveMultiplyLargeIntegers)"); return false;
                 case 30: this.vm.warnOnce("missing primitive: 30 (primitiveDivideLargeIntegers)"); return false;
                 case 31: this.vm.warnOnce("missing primitive: 31 (primitiveModLargeIntegers)"); return false;
@@ -5455,18 +5541,18 @@
                 case 40: return this.popNandPushFloatIfOK(argCount+1,this.stackInteger(0)); // primitiveAsFloat
                 case 41: return this.popNandPushFloatIfOK(argCount+1,this.stackFloat(1)+this.stackFloat(0));  // Float +
                 case 42: return this.popNandPushFloatIfOK(argCount+1,this.stackFloat(1)-this.stackFloat(0));  // Float -
-                case 43: return this.pop2andPushBoolIfOK(this.stackFloat(1)<this.stackFloat(0));  // Float <
-                case 44: return this.pop2andPushBoolIfOK(this.stackFloat(1)>this.stackFloat(0));  // Float >
-                case 45: return this.pop2andPushBoolIfOK(this.stackFloat(1)<=this.stackFloat(0));  // Float <=
-                case 46: return this.pop2andPushBoolIfOK(this.stackFloat(1)>=this.stackFloat(0));  // Float >=
-                case 47: return this.pop2andPushBoolIfOK(this.stackFloat(1)===this.stackFloat(0));  // Float =
-                case 48: return this.pop2andPushBoolIfOK(this.stackFloat(1)!==this.stackFloat(0));  // Float !=
+                case 43: return this.popNandPushBoolIfOK(argCount+1, this.stackFloat(1)<this.stackFloat(0));  // Float <
+                case 44: return this.popNandPushBoolIfOK(argCount+1, this.stackFloat(1)>this.stackFloat(0));  // Float >
+                case 45: return this.popNandPushBoolIfOK(argCount+1, this.stackFloat(1)<=this.stackFloat(0));  // Float <=
+                case 46: return this.popNandPushBoolIfOK(argCount+1, this.stackFloat(1)>=this.stackFloat(0));  // Float >=
+                case 47: return this.popNandPushBoolIfOK(argCount+1, this.stackFloat(1)===this.stackFloat(0));  // Float =
+                case 48: return this.popNandPushBoolIfOK(argCount+1, this.stackFloat(1)!==this.stackFloat(0));  // Float !=
                 case 49: return this.popNandPushFloatIfOK(argCount+1,this.stackFloat(1)*this.stackFloat(0));  // Float.mul
                 case 50: return this.popNandPushFloatIfOK(argCount+1,this.safeFDiv(this.stackFloat(1),this.stackFloat(0)));  // Float.div
                 case 51: return this.popNandPushIfOK(argCount+1,this.floatAsSmallInt(this.stackFloat(0)));  // Float.asInteger
                 case 52: return this.popNandPushFloatIfOK(argCount+1,this.floatFractionPart(this.stackFloat(0)));
                 case 53: return this.popNandPushIntIfOK(argCount+1, this.frexp_exponent(this.stackFloat(0)) - 1); // Float.exponent
-                case 54: return this.popNandPushFloatIfOK(2, this.ldexp(this.stackFloat(1), this.stackFloat(0))); // Float.timesTwoPower
+                case 54: return this.popNandPushFloatIfOK(argCount+1, this.ldexp(this.stackFloat(1), this.stackFloat(0))); // Float.timesTwoPower
                 case 55: return this.popNandPushFloatIfOK(argCount+1, Math.sqrt(this.stackFloat(0))); // SquareRoot
                 case 56: return this.popNandPushFloatIfOK(argCount+1, Math.sin(this.stackFloat(0))); // Sine
                 case 57: return this.popNandPushFloatIfOK(argCount+1, Math.atan(this.stackFloat(0))); // Arctan
@@ -5495,7 +5581,7 @@
                 case 78: return this.popNandPushIfOK(argCount+1, this.nextInstanceAfter(this.stackNonInteger(0))); // Object.nextInstance
                 case 79: return this.primitiveNewMethod(argCount); // Compiledmethod.new
                 // Control Primitives (80-89)
-                case 80: return this.popNandPushIfOK(2,this.doBlockCopy()); // blockCopy:
+                case 80: return this.popNandPushIfOK(argCount+1,this.doBlockCopy()); // blockCopy:
                 case 81: return this.primitiveBlockValue(argCount); // BlockContext.value
                 case 82: return this.primitiveBlockValueWithArgs(argCount); // BlockContext.valueWithArguments:
                 case 83: return this.vm.primitivePerform(argCount); // Object.perform:(with:)*
@@ -5527,7 +5613,7 @@
                 case 108: return this.primitiveKeyboardNext(argCount); // Sensor kbdNext
                 case 109: return this.primitiveKeyboardPeek(argCount); // Sensor kbdPeek
                 // System Primitives (110-119)
-                case 110: return this.pop2andPushBoolIfOK(this.vm.stackValue(1) === this.vm.stackValue(0)); // ==
+                case 110: return this.popNandPushBoolIfOK(argCount+1, this.vm.stackValue(1) === this.vm.stackValue(0)); // ==
                 case 111: return this.popNandPushIfOK(argCount+1, this.vm.getClass(this.vm.top())); // Object.class
                 case 112: return this.popNandPushIfOK(argCount+1, this.vm.image.bytesLeft()); //primitiveBytesLeft
                 case 113: return this.primitiveQuit(argCount);
@@ -5538,24 +5624,24 @@
                 case 118: return this.primitiveDoPrimitiveWithArgs(argCount);
                 case 119: return this.vm.flushMethodCacheForSelector(this.vm.top()); // before Squeak 2.3 uses 116
                 // Miscellaneous Primitives (120-149)
-                case 120: this.vm.warnOnce("missing primitive:121 (primitiveCalloutToFFI)"); return false;
+                case 120: return this.primitiveCalloutToFFI(argCount, primMethod);
                 case 121: return this.primitiveImageName(argCount); //get+set imageName
                 case 122: return this.primitiveReverseDisplay(argCount); // Blue Book: primitiveImageVolume
                 case 123: this.vm.warnOnce("missing primitive: 123 (primitiveValueUninterruptably)"); return false;
-                case 124: return this.popNandPushIfOK(2, this.registerSemaphore(Squeak.splOb_TheLowSpaceSemaphore));
-                case 125: return this.popNandPushIfOK(2, this.setLowSpaceThreshold());
+                case 124: return this.popNandPushIfOK(argCount+1, this.registerSemaphore(Squeak.splOb_TheLowSpaceSemaphore));
+                case 125: return this.popNandPushIfOK(argCount+1, this.setLowSpaceThreshold());
                 case 126: return this.primitiveDeferDisplayUpdates(argCount);
                 case 127: return this.primitiveShowDisplayRect(argCount);
                 case 128: return this.primitiveArrayBecome(argCount, true, true); // both ways, do copy hash
-                case 129: return this.popNandPushIfOK(1, this.vm.image.specialObjectsArray); //specialObjectsOop
+                case 129: return this.popNandPushIfOK(argCount+1, this.vm.image.specialObjectsArray); //specialObjectsOop
                 case 130: return this.primitiveFullGC(argCount);
                 case 131: return this.primitivePartialGC(argCount);
-                case 132: return this.pop2andPushBoolIfOK(this.pointsTo(this.stackNonInteger(1), this.vm.top())); //Object.pointsTo
+                case 132: return this.popNandPushBoolIfOK(argCount+1, this.pointsTo(this.stackNonInteger(1), this.vm.top())); //Object.pointsTo
                 case 133: return this.popNIfOK(argCount); //TODO primitiveSetInterruptKey
-                case 134: return this.popNandPushIfOK(2, this.registerSemaphore(Squeak.splOb_TheInterruptSemaphore));
-                case 135: return this.popNandPushIfOK(1, this.millisecondClockValue());
+                case 134: return this.popNandPushIfOK(argCount+1, this.registerSemaphore(Squeak.splOb_TheInterruptSemaphore));
+                case 135: return this.popNandPushIfOK(argCount+1, this.millisecondClockValue());
                 case 136: return this.primitiveSignalAtMilliseconds(argCount); //Delay signal:atMs:();
-                case 137: return this.popNandPushIfOK(1, this.secondClock()); // seconds since Jan 1, 1901
+                case 137: return this.popNandPushIfOK(argCount+1, this.secondClock()); // seconds since Jan 1, 1901
                 case 138: return this.popNandPushIfOK(argCount+1, this.someObject()); // Object.someObject
                 case 139: return this.popNandPushIfOK(argCount+1, this.nextObject(this.vm.top())); // Object.nextObject
                 case 140: return this.primitiveBeep(argCount);
@@ -5596,7 +5682,7 @@
                 case 167: return false; // Processor.yield
                 case 168: return this.primitiveCopyObject(argCount);
                 case 169: if (this.oldPrims) return this.primitiveDirectorySetMacTypeAndCreator(argCount);
-                    else return this.pop2andPushBoolIfOK(this.vm.stackValue(1) !== this.vm.stackValue(0)); //new: primitiveNotIdentical
+                    else return this.popNandPushBoolIfOK(argCount+1, this.vm.stackValue(1) !== this.vm.stackValue(0)); //new: primitiveNotIdentical
                 // Sound Primitives (170-199)
                 case 170: if (this.oldPrims) return this.namedPrimitive('SoundPlugin', 'primitiveSoundStart', argCount);
                     else return this.primitiveAsCharacter(argCount);
@@ -5629,9 +5715,9 @@
                 case 182: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'oldprimSampledSoundmixSampleCountintostartingAtleftVolrightVol', argCount);
                     return this.primitiveSizeInBytes(argCount);
                 case 183: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primitiveApplyReverb', argCount);
-                    break;  // fail
+                    else return this.primitiveIsPinned(argCount);
                 case 184: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primitiveMixLoopedSampledSound', argCount);
-                    else return this.popNandPushIfOK(argCount+1, this.vm.trueObj); // pin
+                    else return this.primitivePin(argCount);
                 case 185: if (this.oldPrims) return this.namedPrimitive('SoundGenerationPlugin', 'primitiveMixSampledSound', argCount);
                     else return this.primitiveExitCriticalSection(argCount);
                 case 186: if (this.oldPrims) break; // unused
@@ -5675,17 +5761,17 @@
                 case 209: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketCreate', argCount);
                     else return this.primitiveFullClosureValueNoContextSwitch(argCount);
                 case 210: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketDestroy', argCount);
-                    else return this.popNandPushIfOK(2, this.objectAt(false,false,false)); // contextAt:
+                    else return this.popNandPushIfOK(argCount+1, this.objectAt(false,false,false)); // contextAt:
                 case 211: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketConnectionStatus', argCount);
-                    else return this.popNandPushIfOK(3, this.objectAtPut(false,false,false)); // contextAt:put:
+                    else return this.popNandPushIfOK(argCount+1, this.objectAtPut(false,false,false)); // contextAt:put:
                 case 212: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketError', argCount);
-                    else return this.popNandPushIfOK(1, this.objectSize(false)); // contextSize
+                    else return this.popNandPushIfOK(argCount+1, this.objectSize(false)); // contextSize
                 case 213: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketLocalAddress', argCount);
                 case 214: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketLocalPort', argCount);
                 case 215: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketRemoteAddress', argCount);
                 case 216: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketRemotePort', argCount);
                 case 217: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketConnectToPort', argCount);
-                case 218: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketListenOnPort', argCount);
+                case 218: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketListenWithOrWithoutBacklog', argCount);
                     else { this.vm.warnOnce("missing primitive: 218 (tryNamedPrimitiveInForWithArgs"); return false; }
                 case 219: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketCloseConnection', argCount);
                 case 220: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketAbortConnection', argCount);
@@ -5696,6 +5782,7 @@
                     else return this.primitiveClosureValueNoContextSwitch(argCount);
                 case 223: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketSendDataBufCount', argCount);
                 case 224: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketSendDone', argCount);
+                case 225: if (this.oldPrims) return this.namedPrimitive('SocketPlugin', 'primitiveSocketAccept', argCount);
                     break;  // fail 223-229 if fell through
                 // 225-229: unused
                 // Other Primitives (230-249)
@@ -5711,9 +5798,9 @@
                 case 239: if (this.oldPrims) return this.namedPrimitive('SerialPlugin', 'primitiveSerialPortClose', argCount);
                     break;  // fail 234-239 if fell through
                 case 240: if (this.oldPrims) return this.namedPrimitive('SerialPlugin', 'primitiveSerialPortWrite', argCount);
-                    else return this.popNandPushIfOK(1, this.microsecondClockUTC());
+                    else return this.popNandPushIfOK(argCount+1, this.microsecondClockUTC());
                 case 241: if (this.oldPrims) return this.namedPrimitive('SerialPlugin', 'primitiveSerialPortRead', argCount);
-                    else return this.popNandPushIfOK(1, this.microsecondClockLocal());
+                    else return this.popNandPushIfOK(argCount+1, this.microsecondClockLocal());
                 case 242: if (this.oldPrims) break; // unused
                     else return this.primitiveSignalAtUTCMicroseconds(argCount);
                 case 243: if (this.oldPrims) return this.namedPrimitive('MiscPrimitivePlugin', 'primitiveTranslateStringWithTable', argCount);
@@ -5766,6 +5853,7 @@
             var sp = this.vm.sp;
             if (mod) {
                 this.interpreterProxy.argCount = argCount;
+                this.interpreterProxy.primitiveName = functionName;
                 var primitive = mod[functionName];
                 if (typeof primitive === "function") {
                     result = mod[functionName](argCount);
@@ -5840,6 +5928,7 @@
                 console.log("Module initialization failed: " + modName);
                 return null;
             }
+            if (mod.getModuleName) modName = mod.getModuleName();
             console.log("Loaded module: " + modName);
             return mod;
         },
@@ -5919,6 +6008,11 @@
             this.vm.success = this.success;
             return this.vm.pop2AndPushBoolResult(bool);
         },
+        popNandPushBoolIfOK: function(nToPop, bool) {
+            if (!this.success) return false;
+            this.vm.popNandPush(nToPop, bool ? this.vm.trueObj : this.vm.falseObj);
+            return true;
+        },
         popNandPushIfOK: function(nToPop, returnValue) {
             if (!this.success || returnValue == null) return false;
             this.vm.popNandPush(nToPop, returnValue);
@@ -5926,11 +6020,13 @@
         },
         popNandPushIntIfOK: function(nToPop, returnValue) {
             if (!this.success || !this.vm.canBeSmallInt(returnValue)) return false;
-            return this.popNandPushIfOK(nToPop, returnValue);
+            this.vm.popNandPush(nToPop, returnValue);
+            return true;
         },
         popNandPushFloatIfOK: function(nToPop, returnValue) {
             if (!this.success) return false;
-            return this.popNandPushIfOK(nToPop, this.makeFloat(returnValue));
+            this.vm.popNandPush(nToPop, this.makeFloat(returnValue));
+            return true;
         },
         stackNonInteger: function(nDeep) {
             return this.checkNonInteger(this.vm.stackValue(nDeep));
@@ -6105,23 +6201,23 @@
                 result *= Math.pow(2, Math.floor((exponent + i) / steps));
             return result;
         },
-        primitiveLessThanLargeIntegers: function() {
-            return this.pop2andPushBoolIfOK(this.stackSigned53BitInt(1) < this.stackSigned53BitInt(0));
+        primitiveLessThanLargeIntegers: function(argCount) {
+            return this.popNandPushBoolIfOK(argCount+1, this.stackSigned53BitInt(1) < this.stackSigned53BitInt(0));
         },
-        primitiveGreaterThanLargeIntegers: function() {
-            return this.pop2andPushBoolIfOK(this.stackSigned53BitInt(1) > this.stackSigned53BitInt(0));
+        primitiveGreaterThanLargeIntegers: function(argCount) {
+            return this.popNandPushBoolIfOK(argCount+1, this.stackSigned53BitInt(1) > this.stackSigned53BitInt(0));
         },
-        primitiveLessOrEqualLargeIntegers: function() {
-            return this.pop2andPushBoolIfOK(this.stackSigned53BitInt(1) <= this.stackSigned53BitInt(0));
+        primitiveLessOrEqualLargeIntegers: function(argCount) {
+            return this.popNandPushBoolIfOK(argCount+1, this.stackSigned53BitInt(1) <= this.stackSigned53BitInt(0));
         },
-        primitiveGreaterOrEqualLargeIntegers: function() {
-            return this.pop2andPushBoolIfOK(this.stackSigned53BitInt(1) >= this.stackSigned53BitInt(0));
+        primitiveGreaterOrEqualLargeIntegers: function(argCount) {
+            return this.popNandPushBoolIfOK(argCount+1, this.stackSigned53BitInt(1) >= this.stackSigned53BitInt(0));
         },
-        primitiveEqualLargeIntegers: function() {
-            return this.pop2andPushBoolIfOK(this.stackSigned53BitInt(1) === this.stackSigned53BitInt(0));
+        primitiveEqualLargeIntegers: function(argCount) {
+            return this.popNandPushBoolIfOK(argCount+1, this.stackSigned53BitInt(1) === this.stackSigned53BitInt(0));
         },
-        primitiveNotEqualLargeIntegers: function() {
-            return this.pop2andPushBoolIfOK(this.stackSigned53BitInt(1) !== this.stackSigned53BitInt(0));
+        primitiveNotEqualLargeIntegers: function(argCount) {
+            return this.popNandPushBoolIfOK(argCount+1, this.stackSigned53BitInt(1) !== this.stackSigned53BitInt(0));
         },
     },
     'utils', {
@@ -6509,6 +6605,20 @@
         newObjectHash: function(obj) {
             return Math.floor(Math.random() * 0x3FFFFE) + 1;
         },
+        primitivePin: function(argCount) {
+            // For us, pinning is a no-op, so we just toggle the pinned flag
+            var rcvr = this.stackNonInteger(1),
+                pin = this.stackBoolean(0);
+            if (!this.success) return false;
+            var wasPinned = rcvr.pinned;
+            rcvr.pinned = pin;
+            return this.popNandPushIfOK(argCount + 1, this.makeStObject(!!wasPinned));
+        },
+        primitiveIsPinned: function(argCount) {
+            var rcvr = this.stackNonInteger(0);
+            if (!this.success) return false;
+            return this.popNandPushIfOK(argCount + 1, this.makeStObject(!!rcvr.pinned));
+        },
         primitiveSizeInBytesOfInstance: function(argCount) {
             if (argCount > 1) return false;
             var classObj = this.stackNonInteger(argCount),
@@ -6531,12 +6641,12 @@
         primitiveFullGC: function(argCount) {
             this.vm.image.fullGC("primitive");
             var bytes = this.vm.image.bytesLeft();
-            return this.popNandPushIfOK(1, this.makeLargeIfNeeded(bytes));
+            return this.popNandPushIfOK(argCount+1, this.makeLargeIfNeeded(bytes));
         },
         primitivePartialGC: function(argCount) {
             this.vm.image.partialGC("primitive");
             var bytes = this.vm.image.bytesLeft();
-            return this.popNandPushIfOK(1, this.makeLargeIfNeeded(bytes));
+            return this.popNandPushIfOK(argCount+1, this.makeLargeIfNeeded(bytes));
         },
         primitiveMakePoint: function(argCount, checkNumbers) {
             var x = this.vm.stackValue(1);
@@ -7018,11 +7128,16 @@
             oldProc.dirty = true;
             this.vm.newActiveContext(newProc.pointers[Squeak.Proc_suspendedContext]);
             newProc.pointers[Squeak.Proc_suspendedContext] = this.vm.nilObj;
+            if (!this.oldPrims) newProc.pointers[Squeak.Proc_myList] = this.vm.nilObj;
             this.vm.reclaimableContextCount = 0;
             if (this.vm.breakOnContextChanged) {
                 this.vm.breakOnContextChanged = false;
                 this.vm.breakNow();
             }
+            if (this.vm.logProcess) console.log(
+                "\n============= Process Switch ==================\n"
+                + this.vm.printProcess(newProc, true, this.vm.logSends ? '| ' : '')
+                + "===============================================");
         },
         wakeHighestPriority: function() {
             //Return the highest priority process that is ready to run.
@@ -7081,7 +7196,10 @@
             } else {
                 var temp = first;
                 while (true) {
-                    if (temp.isNil) return this.success = false;
+                    if (temp.isNil) {
+                        if (this.oldPrims) this.success = false;
+                        return;
+                    }
                     next = temp.pointers[Squeak.Link_nextLink];
                     if (next === process) break;
                     temp = next;
@@ -7612,6 +7730,10 @@
 
     'initialization', {
         initialize: function(vm) {
+            if (vm.method.methodSignFlag()) {
+                console.warn("Sista bytecode set not (yet) supported by this JIT");
+                return {};
+            }
             this.vm = vm;
             this.comments = !!Squeak.Compiler.comments, // generate comments
             // for debug-printing only
@@ -10917,23 +11039,74 @@
         primHandler: null,
 
         setInterpreter: function(anInterpreter) {
+          this.setupGlobalObject();
           this.interpreterProxy = anInterpreter;
           this.primHandler = this.interpreterProxy.vm.primHandler;
           this.characterClass = this.interpreterProxy.vm.globalNamed("Character");
           this.symbolClass = this.interpreterProxy.vm.globalNamed("Symbol");
+          this.symbolTable = Object.create(null);
           this.stringClass = this.interpreterProxy.vm.globalNamed("String");
           this.byteStringClass = this.interpreterProxy.vm.globalNamed("ByteString");
           this.wideStringClass = this.interpreterProxy.vm.globalNamed("WideString");
           this.arrayClass = this.interpreterProxy.vm.globalNamed("Array");
+          this.byteArrayClass = this.interpreterProxy.vm.globalNamed("ByteArray");
+          this.wordArrayClass = this.interpreterProxy.vm.globalNamed("WordArray");
           this.associationClass = this.interpreterProxy.vm.globalNamed("Association");
           this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
+          this.blockClosureClass = this.interpreterProxy.vm.globalNamed("BlockClosure");
+          this.globalProxyClasses = {};
           this.updateStringSupport();
           this.updateMakeStObject();
+          this.updateMakeStArray();
           return true;
         },
 
+        // Helper method to create a global scope (working similarly in Browser and in NodeJS)
+        setupGlobalObject: function() {
+          // For Browser environment create a global object named 'global'
+          if(typeof window !== 'undefined' && !window.global) {
+            window.global = window;
+          }
+
+          // Create global function to let objects 'identify' themselves (used for Proxy-ing JavaScript objects).
+          // For undefined or null, answer the global object itself.
+          global.identity = function(x) { return x === undefined || x === null ? global : x; };
+        },
+
+        // Helper method for running a process uninterrupted
+        runUninterrupted: function(process, endTime) {
+          if(!process || process.isNil) {
+            return;
+          }
+
+          // Make specified process the active process (disregard process priorities)
+          var primHandler = this.primHandler;
+          var scheduler = primHandler.getScheduler();
+          primHandler.putToSleep(scheduler.pointers[Squeak.ProcSched_activeProcess]);
+          primHandler.transferTo(process);
+
+          // Run the specified process until the process goes
+          // to sleep again or the end time is reached.
+          // This 'runner' assumes the process runs 'quickly'.
+          var vm = primHandler.vm;
+          do {
+            if(vm.method.compiled) {
+              vm.method.compiled(vm);
+            } else {
+              vm.interpretOne();
+            }
+          } while(process === scheduler.pointers[Squeak.ProcSched_activeProcess] && (endTime === undefined || performance.now() < endTime));
+
+          // If process did not finish in time, put it to sleep
+          if(process === scheduler.pointers[Squeak.ProcSched_activeProcess]) {
+    //console.warn("Process put to sleep because it did not finish in time: " + (process === this.transitionProcess ? "transition" : process === this.eventHandlerProcess ? "process" : process === this.callbackEvaluatorProcess ? "callback evaluator" : "unknown"));
+            primHandler.putToSleep(process);
+          }
+        },
+
+        // Helper methods for creating or converting Smalltalk and JavaScript objects
         updateStringSupport: function() {
-          // Add #asString behavior to String classes (converting from Smalltalk to Javascript Strings)
+          // Add #asString behavior to String classes (converting from Smalltalk to JavaScript Strings)
           this.stringClass.classInstProto().prototype.asString = function() {
             var charChunks = [];
             var src = this.bytes || this.words || [];
@@ -10965,40 +11138,164 @@
         },
 
         updateMakeStObject: function() {
-          // Replace existing makeStObject function with more elaborate variant
-          if(this.originalMakeStObject) {
-            return; // Already installed
-          }
-          var self = this;
-          self.originalMakeStObject = this.primHandler.makeStObject;
-          this.primHandler.makeStObject = function(obj, proxyClass) {
-            if(obj !== undefined && obj !== null) {
-              // Check for Dictionary like element
-              if((obj.constructor === Object && !obj.sqClass) || (obj.constructor === undefined && typeof obj === "object")) {
-                return self.makeStDictionary(obj);
+          var thisHandle = this;
+          this.primHandler.makeStObject = function(obj, proxyClass, seen) {
+            // Check for special 'primitive' objects (no need to use 'seen' here)
+            if(obj === undefined || obj === null) return this.vm.nilObj;
+            if(obj === true) return this.vm.trueObj;
+            if(obj === false) return this.vm.falseObj;
+            if(obj.sqClass) return obj;
+            if(obj.constructor === Number) {
+              if(obj === (obj|0)) {
+                return this.makeLargeIfNeeded(obj);
+              } else {
+                return this.makeFloat(obj);
               }
             }
-            return self.originalMakeStObject.call(this, obj, proxyClass);
+
+            // Check if object is already known
+            seen = seen || [];
+            var stObj = thisHandle.findSeenObj(seen, obj);
+            if(stObj !== undefined) {
+              return stObj;
+            }
+
+            // String like objects
+            if(obj.substring) {
+              return thisHandle.addSeenObj(seen, obj, this.makeStString(obj));
+            }
+
+            // Array like objects
+            if(obj.slice && obj.length !== undefined) {
+              if(obj.BYTES_PER_ELEMENT) {
+                // TypedArray
+                switch(obj.BYTES_PER_ELEMENT) {
+                  case 1:
+                    return thisHandle.addSeenObj(seen, obj, this.makeStByteArray(obj));
+                  case 2:
+                  case 4:
+                    return thisHandle.addSeenObj(seen, obj, thisHandle.makeStWordArray(obj));
+                  default:
+                    console.error("No support for TypedArrays with bytes per element: " + obj.BYTES_PER_ELEMENT, obj);
+                    return this.vm.nilObj;
+                }
+              } else {
+                // Regular Array
+                return thisHandle.addSeenObj(seen, obj, this.makeStArray(obj, proxyClass, seen));
+              }
+            }
+
+            // Dictionary like objects
+            if((obj.constructor === Object && !thisHandle.hasFunctions(obj)) || (obj.constructor === undefined && typeof obj === "object")) {
+              return thisHandle.makeStDictionary(obj, seen);
+            }
+
+            // Wrap in JS proxy instance if so requested or when global proxy class is registered
+            if(!proxyClass) {
+              proxyClass = thisHandle.getProxyClassFor(obj);
+            }
+            if(proxyClass) {
+              var stObj = this.vm.instantiateClass(proxyClass, 0);
+              stObj.jsObj = obj;
+              return thisHandle.addSeenObj(seen, obj, stObj);
+            }
+
+            // Not possible to create a similar Smalltalk object
+            console.error("Can't create Smalltalk object for the following object (answering nil)", obj);
+            return this.vm.nilObj;
           };
         },
-        makeStAssociation: function(key, value) {
+        updateMakeStArray: function() {
+          var thisHandle = this;
+            this.primHandler.makeStArray = function(obj, proxyClass, seen) {
+            // Check if obj is already known
+            seen = seen || [];
+            var stObj = thisHandle.findSeenObj(seen, obj);
+            if(stObj !== undefined) {
+              return stObj;
+            }
+
+            // Create Array and add it to seen collection directly, to allow internal references to be mapped correctly
+            var array = this.vm.instantiateClass(thisHandle.arrayClass, obj.length);
+            seen.push({ jsObj: obj, stObj: array });
+            for(var i = 0; i < obj.length; i++) {
+              array.pointers[i] = this.makeStObject(obj[i], proxyClass, seen);
+            }
+            return array;
+          };
+        },
+        makeStWordArray: function(obj) {
+            var array = this.interpreterProxy.vm.instantiateClass(this.wordArrayClass, obj.length);
+            for(var i = 0; i < obj.length; i++) {
+                // Words are 32-bit values
+                array.words[i] = obj[i] & 0xffffffff;
+            }
+            return array;
+        },
+        makeStAssociation: function(key, value, seen) {
+          // Check if key and/or value is already known (as JavaScript object)
+          seen = seen || [];
+          if(key && !key.sqClass) {
+            var stObj = this.findSeenObj(seen, key);
+            if(stObj !== undefined) {
+              key = stObj;
+            }
+          }
+          if(value && !value.sqClass) {
+            var stObj = this.findSeenObj(seen, value);
+            if(stObj !== undefined) {
+              value = stObj;
+            }
+          }
+
           var association = this.interpreterProxy.vm.instantiateClass(this.associationClass, 0);
           // Assume instVars are #key and #value (in that order)
-          association.pointers[0] = this.primHandler.makeStObject(key);
-          association.pointers[1] = this.primHandler.makeStObject(value);
+          association.pointers[0] = this.primHandler.makeStObject(key, undefined, seen);
+          association.pointers[1] = this.primHandler.makeStObject(value, undefined, seen);
           return association;
         },
-        makeStDictionary: function(obj) {
+        makeStDictionary: function(obj, seen) {
+          // Check if obj is already known
+          seen = seen || [];
+          var stObj = this.findSeenObj(seen, obj);
+          if(stObj !== undefined) {
+            return stObj;
+          }
+
+          // Create Dictionary and add it to seen collection directly, to allow internal references to be mapped correctly
           var dictionary = this.interpreterProxy.vm.instantiateClass(this.dictionaryClass, 0);
+          seen.push({ jsObj: obj, stObj: dictionary });
+
+          // Add key value pairs to Dictionary
           var keys = Object.keys(obj);
-          var self = this;
+          var thisHandle = this;
           var associations = keys.map(function(key) {
-            return self.makeStAssociation(key, obj[key]);
+            return thisHandle.makeStAssociation(key, obj[key], seen);
           });
+
           // Assume instVars are #tally and #array (in that order)
-          dictionary.pointers[0] = keys.length;
-          dictionary.pointers[1] = this.primHandler.makeStArray(associations);
+          dictionary.pointers[0] = associations.length;
+          dictionary.pointers[1] = this.primHandler.makeStArray(associations, undefined, seen);
           return dictionary;
+        },
+        findSeenObj: function(seen, jsObj) {
+          var reference = seen.find(function(ref) {
+            return ref.jsObj === jsObj;
+          });
+          if(reference === undefined) {
+              return undefined;
+          }
+          return reference.stObj;
+        },
+        addSeenObj: function(seen, jsObj, stObj) {
+          seen.push({ jsObj: jsObj, stObj: stObj });
+          return stObj;
+        },
+        hasFunctions: function(obj) {
+          // Answer whether the specified JavaScript object has properties which are a function
+          return Object.keys(obj).some(function(each) {
+            return each && each.apply;
+          });
         },
 
         // Helper methods for answering (and setting the stack correctly)
@@ -11013,8 +11310,8 @@
           return true;
         },
 
-        // Helper methods for converting from Smalltalk object to Javascript object and vice versa
-        asJavascriptObject: function(obj) {
+        // Helper methods for converting from Smalltalk object to JavaScript object and vice versa
+        asJavaScriptObject: function(obj) {
           if(obj.isNil) {
             return null;
           } else if(obj.isTrue) {
@@ -11026,20 +11323,25 @@
           } else if(obj.isFloat) {
             return obj.float;
           } else if(obj.sqClass === this.arrayClass) {
-            return this.arrayAsJavascriptObject(obj);
+            return this.arrayAsJavaScriptObject(obj);
           } else if(obj.sqClass === this.dictionaryClass) {
-            return this.dictionaryAsJavascriptObject(obj);
+            return this.dictionaryAsJavaScriptObject(obj);
           } else if(obj.domElement) {
             return obj.domElement;
+          } else if(this.isBlockClosureClass(obj.sqClass)) {
+            return this.blockAsJavaScriptObject(obj);
+          } else if(obj.jsObj) {
+            return obj.jsObj;
           }
+
           // Assume a String is used otherwise
           return obj.asString();
         },
-        arrayAsJavascriptObject: function(obj) {
+        arrayAsJavaScriptObject: function(obj) {
           var thisHandle = this;
-          return (obj.pointers || []).map(function(each) { return thisHandle.asJavascriptObject(each); });
+          return (obj.pointers || []).map(function(each) { return thisHandle.asJavaScriptObject(each); });
         },
-        dictionaryAsJavascriptObject: function(obj) {
+        dictionaryAsJavaScriptObject: function(obj) {
           var thisHandle = this;
           var associations = obj.pointers.find(function(pointer) {
             return pointer && pointer.sqClass === thisHandle.arrayClass;
@@ -11049,10 +11351,39 @@
           associations.pointers.forEach(function(assoc) {
             if(!assoc.isNil) {
               // Assume instVars are #key and #value (in that order)
-              result[thisHandle.asJavascriptObject(assoc.pointers[0])] = thisHandle.asJavascriptObject(assoc.pointers[1]);
+              result[thisHandle.asJavaScriptObject(assoc.pointers[0])] = thisHandle.asJavaScriptObject(assoc.pointers[1]);
             }
           });
           return result;
+        },
+        blockAsJavaScriptObject: function(obj) {
+          var thisHandle = this;
+          var callback = { block: obj };
+          return function() {
+            var funcArgs = Array.from(arguments);
+            var blockArgs = funcArgs.map(function(each) {
+              return thisHandle.primHandler.makeStObject(each);
+            });
+            callback.arguments = blockArgs;
+            thisHandle.callbackEvaluatorCurrentCallback = callback;
+            var callbackEvaluatorProcess = thisHandle.callbackEvaluatorProcess;
+            if(callbackEvaluatorProcess !== undefined) {
+              thisHandle.runUninterrupted(callbackEvaluatorProcess);
+            } else {
+              thisHandle.interpreterProxy.vm.warnOnce("No callback evaluator process installed. Blocks cannot be used for callbacks without it. See CpCallbackEvaluator");
+            }
+            thisHandle.callbackEvaluatorCurrentCallback = undefined;
+            return callback.result;
+          };
+        },
+        isBlockClosureClass: function(sqClass) {
+          while(sqClass && !sqClass.isNil) {
+            if(sqClass === this.blockClosureClass) {
+              return true;
+            }
+            sqClass = sqClass.superclass();
+          }
+          return false;
         },
 
         // Object instance methods
@@ -11076,36 +11407,33 @@
         },
 
         // Symbol class methods
-        newSymbol: function(string) {
+        symbolFromString: function(string) {
+          var registeredSymbol = this.symbolTable[string];
+          if(registeredSymbol !== undefined) {
+            return registeredSymbol;
+          }
+
+          // Create new Symbol
           var newSymbol = this.interpreterProxy.vm.instantiateClass(this.symbolClass, string.length);
           // Assume ByteSymbols only
           for(var i = 0; i < string.length; i++) {
-              newSymbol.bytes[i] = string.charCodeAt(i) & 0xFF;
+            newSymbol.bytes[i] = string.charCodeAt(i) & 0xFF;
           }
+          this.symbolTable[string] = newSymbol;
           return newSymbol;
         },
         "primitiveSymbolRegister:": function(argCount) {
           if(argCount !== 1) return false;
           var symbol = this.interpreterProxy.stackValue(0);
           var symbolString = symbol.asString();
-          if(!this.symbolClass.symbolTable) {
-            this.symbolClass.symbolTable = {};
-          }
-          if(this.symbolClass.symbolTable[symbolString]) { throw Error("Registered non-unique Symbol: " + symbolString); }
-          this.symbolClass.symbolTable[symbolString] = symbol;
+          if(this.symbolTable[symbolString]) { throw Error("Registered non-unique Symbol: " + symbolString); }
+          this.symbolTable[symbolString] = symbol;
           return this.answerSelf(argCount);
         },
         "primitiveSymbolFromString:": function(argCount) {
           if(argCount !== 1) return false;
           var string = this.interpreterProxy.stackValue(0).asString();
-          if(!this.symbolClass.symbolTable) {
-            this.symbolClass.symbolTable = {};
-          }
-          var registeredSymbol = this.symbolClass.symbolTable[string];
-          if(registeredSymbol === undefined) {
-            registeredSymbol = this.symbolClass.symbolTable[string] = this.newSymbol(string);
-          }
-          return this.answer(argCount, registeredSymbol);
+          return this.answer(argCount, this.symbolFromString(string));
         },
 
         // Symbol instance methods
@@ -11197,7 +11525,7 @@
           if(receiver.isFloat) {
             // Only support for floats with base 10
             if(base === 10) {
-              // Javascript already has same String representation for NaN, Infinity and -Infinity
+              // JavaScript already has same String representation for NaN, Infinity and -Infinity
               // No need to distinguish these here
               value = receiver.float.toString();
             }
@@ -11402,12 +11730,237 @@
           return this.answer(argCount, newString);
         },
 
+        // JavaScriptObject class methods
+        "primitiveJavaScriptObjectRegisterProxyClass:forClassName:": function(argCount) {
+          if(argCount !== 2) return false;
+          var proxyClass = this.interpreterProxy.stackValue(1);
+          if(proxyClass.isNil) return false;
+          var proxyClassName = this.interpreterProxy.stackValue(0).asString();
+          if(!proxyClassName) return false;
+
+          // Register Proxy Class
+          this.globalProxyClasses[proxyClassName] = proxyClass;
+
+          // Install special pass-through method on functions (needed by JavaScriptPromises)
+          if(!Function.prototype.applyPassThrough) {
+            Function.prototype.applyPassThrough = function(thisArg, args) {
+              return this.apply(thisArg, args);
+            };
+          }
+          return this.answerSelf(argCount);
+        },
+        getProxyClassFor: function(jsObj) {
+          var jsClass = jsObj && jsObj.constructor;
+          if(!jsClass) {
+            return null;
+          }
+
+          var proxyClassNames = Object.keys(this.globalProxyClasses);
+          if(proxyClassNames.length === 0) {
+            return null;
+          }
+          var proxyClassName = undefined;
+          while(jsClass) {
+
+            // Find Proxy Class for the specified JavaScript object (only exact match)
+            proxyClassName = proxyClassNames.find(function(name) {
+              return global[name] === jsClass;
+            });
+
+            // Try the superclass
+            if(proxyClassName) {
+              jsClass = null;       // Stop iterating (we found Proxy Class)
+            } else {
+              jsClass = Object.getPrototypeOf(jsClass);
+            }
+          }
+
+          // Fall back to the default Proxy Class (for "Object") if none is found
+          // (this is for Objects which where created using Object.create(null)
+          // or some native Objects which do not inherit from Object)
+          if(!proxyClassName) {
+            proxyClassName = "Object";
+          }
+
+          return this.globalProxyClasses[proxyClassName];
+        },
+
+        // JavaScriptObject instance methods
+        "primitiveJavaScriptObjectApply:withArguments:resultAs:": function(argCount) {
+          if(argCount !== 3) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var obj = receiver.jsObj;
+          if(obj === undefined) return false;
+          var selectorName = this.interpreterProxy.stackValue(2).asString();
+          if(!selectorName) return false;
+
+          // Handle special case for pass through, needed to support Promises
+          // (which should not perform Smalltalk to JavaScript conversions
+          // automatically, since it would 'undo' the work done in the
+          // Smalltalk code if explicit conversions are applied).
+          var args = obj.constructor === Function && selectorName === "applyPassThrough" ?
+            [ null, this.interpreterProxy.stackValue(1).pointers[1].pointers.map(function(each) { return each; }) ]
+            : this.asJavaScriptObject(this.interpreterProxy.stackValue(1)) || [];
+          var proxyClass = this.interpreterProxy.stackValue(0);
+
+          var result = undefined;
+          try {
+
+            // Fast path for function calls first, then use reflection mechanism
+            var func = obj[selectorName];
+            if(func && func.apply) {
+              result = func.apply(obj, args);
+            } else {
+
+              // Try selector first, if not present check if a colon is present
+              // and remove it and every character after it.
+              // (E.g. setTimeout:duration: is translated into setTimeout)
+              var selectorDescription = this.getSelectorNamed(obj, selectorName);
+              if(!selectorDescription) {
+                var colonIndex = selectorName.indexOf(":");
+                if(colonIndex > 0) {
+                  selectorDescription = this.getSelectorNamed(obj, selectorName.slice(0, colonIndex));
+                }
+              }
+              if(!selectorDescription) return false;
+
+              // Get/set property, call function, or read/write (data) property (in that order)
+              // A data property can have value 'undefined' so check for presence of 'writable' field
+              // instead of checking for value to decide if this is a data property.
+              if(selectorDescription.get && args.length === 0) {
+                result = selectorDescription.get.apply(obj);
+              } else if(selectorDescription.set && args.length === 1) {
+                result = selectorDescription.set.apply(obj, args);
+              } else if(selectorDescription.value && selectorDescription.value.constructor === Function) {
+                result = selectorDescription.value.apply(obj, args);
+              } else if(selectorDescription.writable !== undefined) {
+                if(args.length === 0) {
+                  result = selectorDescription.value;
+                } else if(args.length === 1 && selectorDescription.writable) {
+                  result = obj[selectorName] = args[0];
+                }
+              } else {
+                // Do not understand
+                return false;
+              }
+            }
+          } catch(e) {
+            console.error("Failed to perform apply:withArguments on proxied JavaScript object:", e, "Selector:", selectorName, "Arguments:", args, "Object:", obj);
+          }
+
+          // Proxy the result, if so requested
+          if(result !== undefined && result !== null && !proxyClass.isNil) {
+            var proxyInstance = this.interpreterProxy.vm.instantiateClass(proxyClass, 0);
+            proxyInstance.jsObj = result;
+            result = proxyInstance;
+          }
+          return this.answer(argCount, result);
+        },
+        "primitiveJavaScriptObjectGetSelectorNames": function(argCount) {
+          if(argCount !== 0) return false;
+          var obj = this.interpreterProxy.stackValue(argCount).jsObj;
+          if(obj === undefined) return false;
+
+          // Add only unique names
+          var names = Object.create(null);
+          while(obj) {
+            var ownNames = Object.getOwnPropertyNames(obj);
+            ownNames.forEach(function(name) {
+              names[name] = true;
+            });
+            obj = Object.getPrototypeOf(obj);
+          }
+          return this.answer(argCount, Object.keys(names));
+        },
+        "primitiveJavaScriptObjectGetSelectorType:": function(argCount) {
+          if(argCount !== 1) return false;
+          var obj = this.interpreterProxy.stackValue(argCount).jsObj;
+          if(obj === undefined) return false;
+          var selectorName = this.interpreterProxy.stackValue(0).asString();
+          if(!selectorName) return false;
+          var selectorDescription = this.getSelectorNamed(obj, selectorName);
+          if(!selectorDescription) {
+            return this.answer(argCount, null);
+          }
+
+          // Check for selector using getter/setter or data property (that order).
+          // A data property can have value 'undefined' so check for presence of
+          // 'writable' field instead of checking for value to decide if this is
+          // a data property.
+          var type = undefined;
+          if(selectorDescription.get) {
+            if(selectorDescription.set) {
+              type = "read-write-prop";
+            } else {
+              type = "read-prop";
+            }
+          } else if(selectorDescription.set) {
+            type = "write-prop";
+          } else if(selectorDescription.writable !== undefined) {
+            if(selectorDescription.value && selectorDescription.value.constructor === Function) {
+              type = "function";
+            } else if(selectorDescription.writable) {
+              type = "read-write-attr";
+            } else {
+              type = "read-attr";
+            }
+          } else {
+            type = "unknown";
+          }
+          return this.answer(argCount, this.symbolFromString(type));
+        },
+        "primitiveJavaScriptObjectGetClassRefFrom:resultAs:": function(argCount) {
+          if(argCount !== 2) return false;
+          var obj = this.interpreterProxy.stackValue(argCount).jsObj;
+          if(obj === undefined) return false;
+          var selectorName = this.interpreterProxy.stackValue(1).asString();
+          if(!selectorName) return false;
+          var proxyClass = this.interpreterProxy.stackValue(0);
+          if(proxyClass.isNil) return false;
+
+          // Retrieve and validate a (constructor) function, representing a class reference
+          var objClass = obj[selectorName];
+          if(!objClass) return false;
+          var proxyInstance = this.interpreterProxy.vm.instantiateClass(proxyClass, 0);
+          proxyInstance.jsObj = objClass;
+          return this.answer(argCount, proxyInstance);
+        },
+        getSelectorNamed: function(obj, selectorName) {
+          var selectorDescription = undefined;
+          while(obj && !selectorDescription) {
+            selectorDescription = Object.getOwnPropertyDescriptor(obj, selectorName);
+            if(!selectorDescription) {
+              obj = Object.getPrototypeOf(obj);
+            }
+          }
+          return selectorDescription;
+        },
+
+        // JavaScriptClass instance methods
+        "primitiveJavaScriptClassNewInstanceWithArguments:resultAs:": function(argCount) {
+          if(argCount !== 2) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount).jsObj;
+          var jsClass = this.interpreterProxy.stackValue(argCount).jsObj;
+          var args = this.asJavaScriptObject(this.interpreterProxy.stackValue(1)) || [];
+          var proxyClass = this.interpreterProxy.stackValue(0);
+
+          var instance = undefined;
+          try {
+            var jsInstance = Reflect.construct(jsClass, args);
+            instance = this.interpreterProxy.vm.instantiateClass(proxyClass.isNil ? this.getProxyClassFor(jsInstance) : proxyClass, 0);
+            instance.jsObj = jsInstance;
+          } catch(e) {
+            console.error("Failed to instantiate class " + jsClass);
+          }
+          return this.answer(argCount, instance);
+        },
+
         // ClientEnvironment instance methods
         "primitiveEnvironmentVariableAt:": function(argCount) {
           if(argCount !== 1) return false;
           var variableName = this.interpreterProxy.stackValue(0).asString();
           if(!variableName) return false;
-          var variableValue = window.sessionStorage.getItem(variableName);
+          var variableValue = global.sessionStorage.getItem(variableName);
           return this.answer(argCount, variableValue);
         },
         "primitiveEnvironmentVariableAt:put:": function(argCount) {
@@ -11416,14 +11969,14 @@
           if(!variableName) return false;
           var variableValue = this.interpreterProxy.stackValue(0).asString();
           if(!variableValue) return false;
-          window.sessionStorage.setItem(variableName, variableValue);
+          global.sessionStorage.setItem(variableName, variableValue);
           return this.answerSelf(argCount);
         },
         "primitiveEnvironmentVariableNames": function(argCount) {
           if(argCount !== 0) return false;
-          var variableNames = new Array(window.sessionStorage.length);
-          for(var i = 0; i < window.sessionStorage.length; i++) {
-            variableNames[i] = window.sessionStorage.key(i);
+          var variableNames = new Array(global.sessionStorage.length);
+          for(var i = 0; i < global.sessionStorage.length; i++) {
+            variableNames[i] = global.sessionStorage.key(i);
           }
           return this.answer(argCount, variableNames);
         },
@@ -11431,14 +11984,14 @@
           if(argCount !== 1) return false;
           var variableName = this.interpreterProxy.stackValue(0).asString();
           if(!variableName) return false;
-          window.sessionStorage.removeItem(variableName);
+          global.sessionStorage.removeItem(variableName);
           return this.answerSelf(argCount);
         },
         "primitiveEnvironmentPersistentVariableAt:": function(argCount) {
           if(argCount !== 1) return false;
           var variableName = this.interpreterProxy.stackValue(0).asString();
           if(!variableName) return false;
-          var variableValue = window.localStorage.getItem(variableName);
+          var variableValue = global.localStorage.getItem(variableName);
           return this.answer(argCount, variableValue);
         },
         "primitiveEnvironmentPersistentVariableAt:put:": function(argCount) {
@@ -11447,36 +12000,50 @@
           if(!variableName) return false;
           var variableValue = this.interpreterProxy.stackValue(0).asString();
           if(!variableValue) return false;
-          window.localStorage.setItem(variableName, variableValue);
+          global.localStorage.setItem(variableName, variableValue);
           return this.answerSelf(argCount);
         },
         "primitiveEnvironmentRemovePersistentVariableAt:": function(argCount) {
           if(argCount !== 1) return false;
           var variableName = this.interpreterProxy.stackValue(0).asString();
           if(!variableName) return false;
-          window.localStorage.removeItem(variableName);
+          global.localStorage.removeItem(variableName);
           return this.answerSelf(argCount);
         },
         "primitiveEnvironmentAlert:": function(argCount) {
           if(argCount !== 1) return false;
           var message = this.interpreterProxy.stackValue(0).asString();
-          window.alert(message);
+          if(global.alert) {
+            global.alert(message);
+          } else {
+            console.warn(message);
+          }
           return this.answerSelf(argCount);
         },
         "primitiveEnvironmentConfirm:": function(argCount) {
           if(argCount !== 1) return false;
           var message = this.interpreterProxy.stackValue(0).asString();
-          return this.answer(argCount, window.confirm(message) === true);
+          if(!global.confirm) return false;
+          return this.answer(argCount, global.confirm(message) === true);
         },
         "primitiveEnvironmentGlobalApply:withArguments:": function(argCount) {
           if(argCount !== 2) return false;
           var functionName = this.interpreterProxy.stackValue(1).asString();
           if(!functionName) return false;
-          var functionArguments = this.asJavascriptObject(this.interpreterProxy.stackValue(0));
-          return this.answer(argCount, window[functionName].apply(window, functionArguments));
+          var functionArguments = this.asJavaScriptObject(this.interpreterProxy.stackValue(0)) || [];
+          var func = global[functionName];
+          if(!func || !func.apply) return false;
+          var result = undefined;
+          try {
+            result = func.apply(global, functionArguments);
+          } catch(e) {
+            console.error("Failed to perform apply:withArguments on global object:", e, "Selector:", functionName, "Arguments:", functionArguments);
+          }
+          return this.answer(argCount, result);
         },
         "primitiveEnvironmentReload": function(argCount) {
           if(argCount !== 0) return false;
+          if(typeof window === 'undefined') return false;
           window.document.location.reload(true);
           return this.answerSelf(argCount);
         },
@@ -11592,6 +12159,33 @@
           }
 
           return this.answer(argCount, success);
+        },
+
+        // CallbackEvaluator class methods
+        "primitiveCallbackEvaluatorRegisterProcess:": function(argCount) {
+          if(argCount !== 1) return false;
+          this.callbackEvaluatorProcess = this.interpreterProxy.stackValue(0);
+          this.callbackEvaluatorCallbacks = [];
+          return this.answerSelf(argCount);
+        },
+        "primitiveCallbackEvaluatorCurrentCallbackBlockAndArguments": function(argCount) {
+          if(argCount !== 0) return false;
+          var callback = this.callbackEvaluatorCurrentCallback;
+          if(callback === undefined) {
+            // No callback present, answer nil
+            return this.answer(argCount, null);
+          }
+          return this.answer(argCount, [ callback.block, callback.arguments ]);
+        },
+        "primitiveCallbackEvaluatorCurrentCallbackResult:": function(argCount) {
+          if(argCount !== 1) return false;
+          var result = this.asJavaScriptObject(this.interpreterProxy.stackValue(0));
+          var callback = this.callbackEvaluatorCurrentCallback;
+          if(callback === undefined) {
+            return false;
+          }
+          callback.result = result;
+          return this.answerSelf(argCount);
         }
       };
     }
@@ -11635,34 +12229,6 @@
           return true;
         },
 
-        // Helper method for running a process uninterrupted
-        runUninterrupted: function(process, endTime) {
-          if(!process || process.isNil) {
-            return;
-          }
-
-          // Run the specified process until the process goes
-          // to sleep again or the end time is reached.
-          // This 'runner' assumes the process runs 'quickly'.
-          var primHandler = this.primHandler;
-          primHandler.resume(process);
-          var scheduler = primHandler.getScheduler();
-          var vm = primHandler.vm;
-          do {
-            if(vm.method.compiled) {
-              vm.method.compiled(vm);
-            } else {
-              vm.interpretOne();
-            }
-          } while(process === scheduler.pointers[Squeak.ProcSched_activeProcess] && (endTime === undefined || performance.now() < endTime));
-
-          // If process did not finish in time, put it to sleep
-          if(process === scheduler.pointers[Squeak.ProcSched_activeProcess]) {
-    //console.warn("Process put to sleep because it did not finish in time: " + (process === this.transitionProcess ? "transition" : process === this.eventHandlerProcess ? "process" : "unknown"));
-            primHandler.putToSleep(process);
-          }
-        },
-
         // Helper methods for answering (and setting the stack correctly)
         answer: function(argCount, value) {
           this.interpreterProxy.popthenPush(argCount + 1, this.primHandler.makeStObject(value));
@@ -11673,6 +12239,8 @@
           this.interpreterProxy.pop(argCount);
           return true;
         },
+
+        // Helper methods for creating or converting Smalltalk and JavaScript objects
         updateMakeStObject: function() {
           // Replace existing makeStObject function with more elaborate variant
           if(this.originalMakeStObject) {
@@ -11680,14 +12248,14 @@
           }
           var self = this;
           self.originalMakeStObject = this.primHandler.makeStObject;
-          this.primHandler.makeStObject = function(obj, proxyClass) {
+          this.primHandler.makeStObject = function(obj, proxyClass, seen) {
             if(obj !== undefined && obj !== null) {
-              // Check for DOM element
+              // Check for DOM element (it will use own internal wrapping, do not use 'seen' here)
               if(obj.querySelectorAll) {
                 return self.instanceForElement(obj);
               }
             }
-            return self.originalMakeStObject.call(this, obj, proxyClass);
+            return self.originalMakeStObject.call(this, obj, proxyClass, seen);
           };
           // Make sure document has a localName
           window.document.localName = "document";
@@ -12107,7 +12675,7 @@
           if(argCount !== 2) return false;
           var propertyName = this.interpreterProxy.stackValue(1).asString();
           if(!propertyName) return false;
-          var propertyValue = this.systemPlugin.asJavascriptObject(this.interpreterProxy.stackValue(0));
+          var propertyValue = this.systemPlugin.asJavaScriptObject(this.interpreterProxy.stackValue(0));
           var domElement = this.interpreterProxy.stackValue(argCount).domElement;
           if(!domElement) return false;
           domElement[propertyName] = propertyValue;
@@ -12206,24 +12774,16 @@
           if(!domElement) return false;
           var functionName = this.interpreterProxy.stackValue(1).asString();
           if(!functionName) return false;
-          var functionArguments = this.systemPlugin.asJavascriptObject(this.interpreterProxy.stackValue(0));
-          // Evaluate function in separate event cycle, preventing possible event to be generated outside the
-          // Smalltalk execution thread. Sending #focus for example would synchronously execute the #focusin
-          // event, which would get executed before this primitive is finished. It will leave the VM stack
-          // unbalanced.
-          window.setTimeout(function() { domElement[functionName].apply(domElement, functionArguments); }, 0);
-          return this.answerSelf(argCount);
-        },
-        "primitiveDomElementSyncApply:withArguments:": function(argCount) {
-          if(argCount !== 2) return false;
-          var domElement = this.interpreterProxy.stackValue(argCount).domElement;
-          if(!domElement) return false;
-          var functionName = this.interpreterProxy.stackValue(1).asString();
-          if(!functionName) return false;
-          var functionArguments = this.systemPlugin.asJavascriptObject(this.interpreterProxy.stackValue(0));
-          // This is the 'unsafe' variant of primitiveDomElementApply. See the comment there. Use with care.
-          // This variant is useful for performing getters.
-          return this.answer(argCount, domElement[functionName].apply(domElement, functionArguments));
+          var functionArguments = this.systemPlugin.asJavaScriptObject(this.interpreterProxy.stackValue(0)) || [];
+          var func = domElement[functionName];
+          if(!func || !func.apply) return false;
+          var result = undefined;
+          try {
+            result = func.apply(domElement, functionArguments);
+          } catch(e) {
+            console.error("Failed to perform apply:withArguments on global object:", e, "Selector:", functionName, "Arguments:", functionArguments);
+          }
+          return this.answer(argCount, result);
         },
 
         // HTMLElement class methods
@@ -12512,10 +13072,16 @@
           });
         },
         handleEvents: function() {
-          if(this.eventHandlerProcess && this.eventsReceived.length > 0) {
+          // The event handler process is non-reentrant, check if it is already running and needs running
+          if(this.eventHandlerProcess && !this.eventHandlerProcess.isRunning && this.eventsReceived.length > 0) {
     //var start = null;
     //if(window.sessionStorage.getItem("DEBUG")) start = performance.now();
-            this.runUninterrupted(this.eventHandlerProcess);
+            try {
+              this.eventHandlerProcess.isRunning = true;
+              this.systemPlugin.runUninterrupted(this.eventHandlerProcess);
+            } finally {
+              this.eventHandlerProcess.isRunning = false;
+            }
     //if(start !== null) console.log("Event handler took " + (performance.now() - start) + "ms");
           }
         },
@@ -12726,7 +13292,7 @@
         // CustomEvent instance methods
         "primitiveCustomEventCreateWithDetail:": function(argCount) {
           if(argCount !== 1) return false;
-          var detail = this.systemPlugin.asJavascriptObject(this.interpreterProxy.stackValue(0));
+          var detail = this.systemPlugin.asJavaScriptObject(this.interpreterProxy.stackValue(0));
           var receiver = this.interpreterProxy.stackValue(argCount);
           if(receiver.event) return false; // Already created!
           var type = receiver.sqClass.type;
@@ -12756,7 +13322,7 @@
           return this.answer(argCount, Math.ceil(performance.now() - this.transitionStartTick));
         },
         handleTransitions: function(endTime) {
-          this.runUninterrupted(this.transitionProcess, endTime);
+          this.systemPlugin.runUninterrupted(this.transitionProcess, endTime);
         }
       };
     }
