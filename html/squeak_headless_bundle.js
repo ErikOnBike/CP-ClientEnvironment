@@ -118,7 +118,7 @@
         // system attributes
         vmVersion: "SqueakJS 1.1.2",
         vmDate: "2024-01-28",               // Maybe replace at build time?
-        vmBuild: "20240203",                 // or replace at runtime by last-modified?
+        vmBuild: "20240204",                 // or replace at runtime by last-modified?
         vmPath: "unknown",                  // Replace at runtime
         vmFile: "vm.js",
         vmMakerVersion: "[VMMakerJS-bf.17 VMMaker-bf.353]", // for Smalltalk vmVMMakerVersion
@@ -11054,7 +11054,7 @@
           this.associationClass = this.interpreterProxy.vm.globalNamed("Association");
           this.dictionaryClass = this.interpreterProxy.vm.globalNamed("Dictionary");
           this.blockClosureClass = this.interpreterProxy.vm.globalNamed("BlockClosure");
-          this.globalProxyClass = undefined;
+          this.globalProxyClasses = {};
           this.updateStringSupport();
           this.updateMakeStObject();
           this.updateMakeStArray();
@@ -11186,13 +11186,16 @@
             }
 
             // Dictionary like objects
-            if((obj.constructor === Object && !this.hasFunctions(obj)) || (obj.constructor === undefined && typeof obj === "object")) {
+            if((obj.constructor === Object && !thisHandle.hasFunctions(obj)) || (obj.constructor === undefined && typeof obj === "object")) {
               return thisHandle.makeStDictionary(obj, seen);
             }
 
             // Wrap in JS proxy instance if so requested or when global proxy class is registered
-            if(proxyClass || thisHandle.globalProxyClass) {
-              var stObj = this.vm.instantiateClass(proxyClass || thisHandle.globalProxyClass, 0);
+            if(!proxyClass) {
+              proxyClass = thisHandle.getProxyClassFor(obj);
+            }
+            if(proxyClass) {
+              var stObj = this.vm.instantiateClass(proxyClass, 0);
               stObj.jsObj = obj;
               return thisHandle.addSeenObj(seen, obj, stObj);
             }
@@ -11365,7 +11368,7 @@
             thisHandle.callbackEvaluatorCurrentCallback = callback;
             var callbackEvaluatorProcess = thisHandle.callbackEvaluatorProcess;
             if(callbackEvaluatorProcess !== undefined) {
-              thisHandle.runUninterrupted(thisHandle.callbackEvaluatorProcess);
+              thisHandle.runUninterrupted(callbackEvaluatorProcess);
             } else {
               thisHandle.interpreterProxy.vm.warnOnce("No callback evaluator process installed. Blocks cannot be used for callbacks without it. See CpCallbackEvaluator");
             }
@@ -11728,11 +11731,58 @@
         },
 
         // JavaScriptObject class methods
-        "primitiveJavaScriptObjectRegisterProxyClass:": function(argCount) {
-          if(argCount !== 1) return false;
-          var proxyClass = this.interpreterProxy.stackValue(0);
-          this.globalProxyClass = proxyClass.isNil ? null : proxyClass;
+        "primitiveJavaScriptObjectRegisterProxyClass:forClassName:": function(argCount) {
+          if(argCount !== 2) return false;
+          var proxyClass = this.interpreterProxy.stackValue(1);
+          if(proxyClass.isNil) return false;
+          var proxyClassName = this.interpreterProxy.stackValue(0).asString();
+          if(!proxyClassName) return false;
+
+          // Register Proxy Class
+          this.globalProxyClasses[proxyClassName] = proxyClass;
+
+          // Install special pass-through method on functions (needed by JavaScriptPromises)
+          if(!Function.prototype.applyPassThrough) {
+            Function.prototype.applyPassThrough = function(thisArg, args) {
+              return this.apply(thisArg, args);
+            };
+          }
           return this.answerSelf(argCount);
+        },
+        getProxyClassFor: function(jsObj) {
+          var jsClass = jsObj && jsObj.constructor;
+          if(!jsClass) {
+            return null;
+          }
+
+          var proxyClassNames = Object.keys(this.globalProxyClasses);
+          if(proxyClassNames.length === 0) {
+            return null;
+          }
+          var proxyClassName = undefined;
+          while(jsClass) {
+
+            // Find Proxy Class for the specified JavaScript object (only exact match)
+            proxyClassName = proxyClassNames.find(function(name) {
+              return global[name] === jsClass;
+            });
+
+            // Try the superclass
+            if(proxyClassName) {
+              jsClass = null;       // Stop iterating (we found Proxy Class)
+            } else {
+              jsClass = Object.getPrototypeOf(jsClass);
+            }
+          }
+
+          // Fall back to the default Proxy Class (for "Object") if none is found
+          // (this is for Objects which where created using Object.create(null)
+          // or some native Objects which do not inherit from Object)
+          if(!proxyClassName) {
+            proxyClassName = "Object";
+          }
+
+          return this.globalProxyClasses[proxyClassName];
         },
 
         // JavaScriptObject instance methods
@@ -11743,7 +11793,14 @@
           if(obj === undefined) return false;
           var selectorName = this.interpreterProxy.stackValue(2).asString();
           if(!selectorName) return false;
-          var args = this.asJavaScriptObject(this.interpreterProxy.stackValue(1)) || [];
+
+          // Handle special case for pass through, needed to support Promises
+          // (which should not perform Smalltalk to JavaScript conversions
+          // automatically, since it would 'undo' the work done in the
+          // Smalltalk code if explicit conversions are applied).
+          var args = obj.constructor === Function && selectorName === "applyPassThrough" ?
+            [ null, this.interpreterProxy.stackValue(1).pointers[1].pointers.map(function(each) { return each; }) ]
+            : this.asJavaScriptObject(this.interpreterProxy.stackValue(1)) || [];
           var proxyClass = this.interpreterProxy.stackValue(0);
 
           var result = undefined;
@@ -11797,7 +11854,6 @@
             proxyInstance.jsObj = result;
             result = proxyInstance;
           }
-
           return this.answer(argCount, result);
         },
         "primitiveJavaScriptObjectGetSelectorNames": function(argCount) {
@@ -11891,7 +11947,7 @@
           var instance = undefined;
           try {
             var jsInstance = Reflect.construct(jsClass, args);
-            instance = this.interpreterProxy.vm.instantiateClass(proxyClass.isNil ? this.globalProxyClass : proxyClass, 0);
+            instance = this.interpreterProxy.vm.instantiateClass(proxyClass.isNil ? this.getProxyClassFor(jsInstance) : proxyClass, 0);
             instance.jsObj = jsInstance;
           } catch(e) {
             console.error("Failed to instantiate class " + jsClass);
