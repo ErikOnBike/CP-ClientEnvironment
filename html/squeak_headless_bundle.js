@@ -118,7 +118,7 @@
         // system attributes
         vmVersion: "SqueakJS 1.1.2",
         vmDate: "2024-01-28",               // Maybe replace at build time?
-        vmBuild: "20240204",                 // or replace at runtime by last-modified?
+        vmBuild: "20240216",                 // or replace at runtime by last-modified?
         vmPath: "unknown",                  // Replace at runtime
         vmFile: "vm.js",
         vmMakerVersion: "[VMMakerJS-bf.17 VMMaker-bf.353]", // for Smalltalk vmVMMakerVersion
@@ -11856,6 +11856,24 @@
           }
           return this.answer(argCount, result);
         },
+        "primitiveJavaScriptObjectPropertyAt:": function(argCount) {
+          if(argCount !== 1) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var obj = receiver.jsObj;
+          if(obj === undefined) return false;
+          var propertyName = this.interpreterProxy.stackValue(0).asString();
+          return this.answer(argCount, obj[propertyName]);
+        },
+        "primitiveJavaScriptObjectPropertyAt:put:": function(argCount) {
+          if(argCount !== 2) return false;
+          var receiver = this.interpreterProxy.stackValue(argCount);
+          var obj = receiver.jsObj;
+          if(obj === undefined) return false;
+          var propertyName = this.interpreterProxy.stackValue(1).asString();
+          var propertyValue = this.asJavaScriptObject(this.interpreterProxy.stackValue(0));
+          obj[propertyName] = propertyValue;
+          return this.answerSelf(argCount);
+        },
         "primitiveJavaScriptObjectGetSelectorNames": function(argCount) {
           if(argCount !== 0) return false;
           var obj = this.interpreterProxy.stackValue(argCount).jsObj;
@@ -11939,7 +11957,6 @@
         // JavaScriptClass instance methods
         "primitiveJavaScriptClassNewInstanceWithArguments:resultAs:": function(argCount) {
           if(argCount !== 2) return false;
-          var receiver = this.interpreterProxy.stackValue(argCount).jsObj;
           var jsClass = this.interpreterProxy.stackValue(argCount).jsObj;
           var args = this.asJavaScriptObject(this.interpreterProxy.stackValue(1)) || [];
           var proxyClass = this.interpreterProxy.stackValue(0);
