@@ -58,7 +58,7 @@
   <script type="module" src="./squeak_headless_bundle.js"></script>
   <script>
     // Set application identifier
-    let appNameFromUrl = document.location.search.slice(1);
+    let appNameFromUrl = document.location.search.slice(1).replace(/&.*/, "");
     let appNameFromSession = window.sessionStorage.getItem("APP");
     if(appNameFromUrl !== appNameFromSession) {
       if(appNameFromSession) {
