@@ -55,43 +55,40 @@
       }
     }
   </style>
-  <script type="module" src="./squeak_headless_bundle.js"></script>
+  <script type="module" src="./webapp_bundle.min.js"></script>
   <script>
     // Set environment version (monotonic increasing counter, expecting exact match on server)
-    window.sessionStorage.setItem("CLIENT_VERSION", "2");
+    globalThis.sessionStorage.setItem("CLIENT_VERSION", "3");
 
     // Set application identifier
     let appNameFromUrl = document.location.search.slice(1).replace(/&.*/, "");
-    let appNameFromSession = window.sessionStorage.getItem("APP");
+    let appNameFromSession = globalThis.sessionStorage.getItem("APP");
     if(appNameFromUrl !== appNameFromSession) {
       if(appNameFromSession) {
         // End previous session by removing the session id
-        window.sessionStorage.removeItem("CLIENT_ID");
+        globalThis.sessionStorage.removeItem("CLIENT_ID");
       }
-      window.sessionStorage.setItem("APP", appNameFromUrl);
-    }
-
-    // Extract location hash (optional action code)
-    let codeFromUrl = document.location.hash.slice(1);
-    if(codeFromUrl !== "") {
-        window.sessionStorage.setItem("CODE", codeFromUrl);
-        history.pushState(null, "", document.location.pathname + document.location.search);
+      globalThis.sessionStorage.setItem("APP", appNameFromUrl);
     }
 
     // Set server location
-    window.sessionStorage.setItem("SERVER_URL", document.location.protocol.replace("http", "ws") + "//" + document.location.host + "/io");
+    globalThis.sessionStorage.setItem("SERVER_URL", document.location.protocol.replace("http", "ws") + "//" + document.location.host + "/io");
 
     // Set OS/platform identifier
-    let platform = navigator.platform;
-    window.sessionStorage.setItem("OS",
+    let platform = window.navigator.platform || "";
+    let appVersion = window.navigator.appVersion || "";
+    globalThis.sessionStorage.setItem("OS",
       platform.indexOf("Mac") >= 0 ? "macos" :
       platform.indexOf("Win") >= 0 ? "windows" :
       platform.indexOf("Linux") >= 0 ? "linux" :
+      appVersion.indexOf("Mac") >= 0 ? "macos" :
+      appVersion.indexOf("Win") >= 0 ? "windows" :
+      appVersion.indexOf("Linux") >= 0 ? "linux" :
       "unknown");
 
     // Load and start image if this page and its scripts are loaded
     window.addEventListener("load", function() {
-      self.Squeak.fetchImageAndRun("./client-environment.image", { ignoreQuit: false });
+      globalThis.Squeak.fetchImageAndRun("./client-environment.image");
     });
   </script>
 </head>
