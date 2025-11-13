@@ -1,0 +1,4 @@
+*.swp
+
+update-vm.sh
+update-image.sh
