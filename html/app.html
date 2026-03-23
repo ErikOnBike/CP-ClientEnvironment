@@ -60,10 +60,26 @@
     // Set environment version (monotonic increasing counter, expecting exact match on server)
     globalThis.sessionStorage.setItem("CLIENT_VERSION", "9");
 
-    // Set application identifier
-    let appNameFromUrl = document.location.search.slice(1).replace(/&.*/, "");
+    let searchParams = new URLSearchParams(document.location.search);
+    let appNameFromUrl = null;
+
+    // Get application identifier from session (and check for presence in URL)
     let appNameFromSession = globalThis.sessionStorage.getItem("APP");
-    if(appNameFromUrl !== appNameFromSession) {
+    if(appNameFromSession && searchParams.get(appNameFromSession) === "") {
+      appNameFromUrl = appNameFromSession;
+    }
+
+    // Get application identifier from URL (as first search parameter without a value)
+    if(!appNameFromUrl) {
+      searchParams.forEach(function(value, key) {
+        if(appNameFromUrl === null && key && !value) {
+          appNameFromUrl = key;
+        }
+      });
+    }
+
+    // Set current application identifier using URL and session info
+    if(appNameFromUrl && appNameFromUrl !== appNameFromSession) {
       if(appNameFromSession) {
         // End previous session by removing the session id
         globalThis.sessionStorage.removeItem("CLIENT_ID");
