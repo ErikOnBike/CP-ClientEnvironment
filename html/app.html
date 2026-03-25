@@ -85,6 +85,20 @@
         globalThis.sessionStorage.removeItem("CLIENT_ID");
       }
       globalThis.sessionStorage.setItem("APP", appNameFromUrl);
+    } else if(!appNameFromUrl && !appNameFromSession) {
+      // In case no identifier is specified, the URL must have the form:
+      // http://localhost:<port>/<app>["/app.html"|"/index.html"|"/index.htm"]
+      if([ 'localhost', '127.0.0.1' ].includes(document.location.hostname)) {
+        let pathSegements = document.location.pathname.split("/").filter(function(each) { return !!each; });
+        if(pathSegements.length === 1 && !pathSegements[0].endsWith(".html")) {
+          appNameFromUrl = pathSegements[0];
+        } else if(pathSegements.length === 2 && [ 'app.html', 'index.html', 'index.htm' ].includes(pathSegements[1])) {
+          appNameFromUrl = pathSegements[0];
+        }
+        if(appNameFromUrl) {
+          globalThis.sessionStorage.setItem("APP", appNameFromUrl);
+        }
+      }
     }
 
     // Set server location
